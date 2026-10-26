@@ -1,24 +1,166 @@
+
 @import "tailwindcss";
 
 @theme {
-  --color-paper: #edf0f5;
-  --color-panel: #ffffff;
-  --color-ink: #0f1b2d;
-  --color-muted: #5b6778;
-  --color-line: #d8dee8;
-  --color-accent: #0b6e6e;
-  --color-accent-dark: #084f4f;
-  --color-critical: #c62828;
-  --color-high: #e65100;
-  --color-medium: #b7791f;
-  --color-low: #2e7d32;
-  --font-sans: "Segoe UI", "Helvetica Neue", Arial, system-ui, sans-serif;
+  /* FinGuard AI premium dark theme */
+  --color-paper: #07111f;
+  --color-panel: #0d1b2a;
+  --color-ink: #e6f1fb;
+  --color-muted: #91a4b7;
+  --color-line: #203448;
+
+  --color-accent: #2dd4bf;
+  --color-accent-dark: #0f9f91;
+
+  --color-critical: #fb7185;
+  --color-high: #fb923c;
+  --color-medium: #facc15;
+  --color-low: #34d399;
+
+  --font-sans: "Inter", "Segoe UI", Arial, system-ui, sans-serif;
 }
 
-body { background: var(--color-paper); color: var(--color-ink); }
+:root {
+  color-scheme: dark;
+  --surface-raised: #112337;
+  --surface-hover: #172b40;
+  --accent-glow: rgba(45, 212, 191, 0.14);
+}
 
-:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+* {
+  box-sizing: border-box;
+}
 
+html {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(
+      ellipse at 10% 0%,
+      rgba(13, 148, 136, 0.10),
+      transparent 35%
+    ),
+    radial-gradient(
+      ellipse at 100% 100%,
+      rgba(37, 99, 235, 0.07),
+      transparent 35%
+    ),
+    var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01" on;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Selection and keyboard accessibility */
+::selection {
+  background: rgba(45, 212, 191, 0.3);
+  color: #ffffff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* Premium reusable surfaces */
+.fg-card {
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  background: linear-gradient(
+    145deg,
+    rgba(17, 35, 55, 0.96),
+    rgba(13, 27, 42, 0.96)
+  );
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  transition:
+    border-color 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.fg-card:hover {
+  border-color: rgba(45, 212, 191, 0.28);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+}
+
+.fg-interactive {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.fg-interactive:hover {
+  transform: translateY(-1px);
+}
+
+.fg-glow {
+  box-shadow: 0 0 28px var(--accent-glow);
+}
+
+.fg-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Subtle entrance animations */
+@keyframes fg-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fg-animate-in {
+  animation: fg-fade-up 400ms ease-out both;
+}
+
+.fg-delay-1 { animation-delay: 60ms; }
+.fg-delay-2 { animation-delay: 120ms; }
+.fg-delay-3 { animation-delay: 180ms; }
+.fg-delay-4 { animation-delay: 240ms; }
+
+/* Polished scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #30475b transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #30475b;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #46657c;
+}
+
+/* Respect accessibility preferences */
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
