@@ -1,4 +1,5 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
+
+import { initializeApp, getApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
@@ -11,7 +12,29 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// Check required configuration without printing credentials.
+const requiredKeys = [
+  "apiKey",
+  "authDomain",
+  "projectId",
+  "appId",
+];
+
+const missingKeys = requiredKeys.filter(
+  (key) => !firebaseConfig[key]
+);
+
+if (missingKeys.length > 0) {
+  throw new Error(
+    `Missing Firebase configuration: ${missingKeys.join(", ")}. Check your .env.local file.`
+  );
+}
+
+const app = getApps().length
+  ? getApp()
+  : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+export default app;
