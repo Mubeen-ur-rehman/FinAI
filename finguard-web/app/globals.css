@@ -3,14 +3,14 @@
 
 @theme {
   /* FinGuard AI premium dark theme */
-  --color-paper: #07111f;
-  --color-panel: #0d1b2a;
-  --color-ink: #e6f1fb;
-  --color-muted: #91a4b7;
-  --color-line: #203448;
+ --color-paper: #07111f;
+--color-panel: #0b1726;
+--color-ink: #e6f1fb;
+--color-muted: #91a4b7;
+--color-line: #203448;
+--color-accent: #2dd4bf;
+--color-accent-dark: #0f9f91;
 
-  --color-accent: #2dd4bf;
-  --color-accent-dark: #0f9f91;
 
   --color-critical: #fb7185;
   --color-high: #fb923c;

@@ -34,7 +34,7 @@ const TABS = [
 function Brand({ compact = false }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-accent/25 bg-accent/10 text-accent shadow-[0_0_24px_rgba(45,212,191,0.08)]">
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#2dd4bf]/25 bg-[#2dd4bf]/10 text-[#2dd4bf] shadow-[0_0_24px_rgba(45,212,191,0.08)]">
         <svg
           viewBox="0 0 24 24"
           className="h-6 w-6"
@@ -51,11 +51,11 @@ function Brand({ compact = false }) {
       </div>
 
       <div className="min-w-0">
-        <p className="truncate text-base font-bold tracking-tight text-ink">
-          FinGuard <span className="text-accent">AI</span>
+        <p className="truncate text-base font-bold tracking-tight text-[#f1f5f9]">
+          FinGuard <span className="text-[#2dd4bf]">AI</span>
         </p>
         {!compact && (
-          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#94a3b8]">
             Intelligence platform
           </p>
         )}
@@ -68,11 +68,7 @@ function NavItems({ tab, setTab, mobile = false }) {
   return (
     <nav
       aria-label="Main navigation"
-      className={
-        mobile
-          ? "flex gap-2 overflow-x-auto px-4 pb-3"
-          : "space-y-1.5"
-      }
+      className={mobile ? "flex gap-2 overflow-x-auto px-4 pb-3" : "space-y-2"}
     >
       {TABS.map((item) => {
         const active = tab === item.id;
@@ -87,21 +83,21 @@ function NavItems({ tab, setTab, mobile = false }) {
               mobile
                 ? `flex shrink-0 items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm transition-all ${
                     active
-                      ? "border-accent/30 bg-accent/10 font-semibold text-accent"
-                      : "border-line/70 bg-panel/60 text-muted hover:border-line hover:text-ink"
+                      ? "border-[#2dd4bf]/40 bg-[#2dd4bf]/10 font-semibold text-[#5eead4]"
+                      : "border-[#26394d] bg-[#0d1b2a] text-[#cbd5e1] hover:border-[#3c536b] hover:text-white"
                   }`
-                : `group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-200 ${
+                : `group flex w-full items-center gap-3 rounded-xl border px-3 py-3.5 text-left transition-all duration-200 ${
                     active
-                      ? "border-accent/20 bg-accent/10 text-accent shadow-[inset_3px_0_0_#2dd4bf]"
-                      : "border-transparent text-muted hover:border-line/70 hover:bg-white/[0.035] hover:text-ink"
+                      ? "border-[#2dd4bf]/30 bg-[#2dd4bf]/10 text-[#5eead4] shadow-[inset_3px_0_0_#2dd4bf]"
+                      : "border-transparent text-[#cbd5e1] hover:border-[#30475b] hover:bg-[#112337] hover:text-white"
                   }`
             }
           >
             <span
               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg transition-colors ${
                 active
-                  ? "bg-accent/10 text-accent"
-                  : "bg-white/[0.035] text-muted group-hover:text-ink"
+                  ? "bg-[#2dd4bf]/10 text-[#5eead4]"
+                  : "bg-[#ffffff08] text-[#a9bbce] group-hover:text-white"
               }`}
               aria-hidden="true"
             >
@@ -109,12 +105,16 @@ function NavItems({ tab, setTab, mobile = false }) {
             </span>
 
             <span className="min-w-0 flex-1">
-              <span className="block whitespace-nowrap text-sm font-medium">
+              <span className="block whitespace-nowrap text-sm font-semibold">
                 {item.label}
               </span>
 
               {!mobile && (
-                <span className="mt-0.5 block truncate text-[11px] text-muted">
+                <span
+                  className={`mt-1 block truncate text-[11px] ${
+                    active ? "text-[#8de9dd]" : "text-[#94a3b8]"
+                  }`}
+                >
                   {item.description}
                 </span>
               )}
@@ -122,7 +122,7 @@ function NavItems({ tab, setTab, mobile = false }) {
 
             {!mobile && active && (
               <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                className="h-2 w-2 shrink-0 rounded-full bg-[#2dd4bf] shadow-[0_0_10px_rgba(45,212,191,0.55)]"
                 aria-hidden="true"
               />
             )}
@@ -135,14 +135,12 @@ function NavItems({ tab, setTab, mobile = false }) {
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
+    <div className="flex min-h-screen items-center justify-center bg-[#07111f] p-6 text-[#e6f1fb]">
       <div className="fg-card fg-animate-in flex w-full max-w-sm flex-col items-center p-8 text-center">
         <Brand />
-        <div className="mt-8 h-9 w-9 animate-spin rounded-full border-2 border-line border-t-accent" />
-        <h1 className="mt-5 text-lg font-semibold text-ink">
-          Securing your workspace
-        </h1>
-        <p className="mt-2 text-sm text-muted">
+        <div className="mt-8 h-9 w-9 animate-spin rounded-full border-2 border-[#203448] border-t-[#2dd4bf]" />
+        <h1 className="mt-5 text-lg font-semibold">Securing your workspace</h1>
+        <p className="mt-2 text-sm text-[#91a4b7]">
           Checking your authentication status…
         </p>
       </div>
@@ -259,43 +257,45 @@ export default function App() {
   const apiEnabled = Boolean(API_URL);
 
   return (
-    <div className="min-h-screen bg-paper text-ink md:flex">
+    <div className="min-h-screen bg-[#07111f] text-[#e6f1fb] md:flex">
       {/* Desktop sidebar */}
-      <aside className="relative hidden w-[270px] shrink-0 border-r border-line/80 bg-panel/80 md:sticky md:top-0 md:flex md:h-screen md:flex-col">
-        <div className="border-b border-line/70 px-6 py-6">
+      <aside className="relative hidden w-[270px] shrink-0 border-r border-[#203448] bg-[#081321] md:sticky md:top-0 md:flex md:h-screen md:flex-col">
+        <div className="border-b border-[#203448] px-6 py-6">
           <Brand />
 
-          <div className="mt-7 rounded-xl border border-accent/15 bg-accent/[0.045] p-3.5">
+          <div className="mt-7 rounded-xl border border-[#2dd4bf]/20 bg-[#0d1b2a] p-3.5">
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-30" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2dd4bf] opacity-30" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2dd4bf]" />
               </span>
-              <span className="text-xs font-semibold text-accent">
+              <span className="text-xs font-semibold text-[#5eead4]">
                 Risk monitoring
               </span>
             </div>
-            <p className="mt-2 text-xs leading-5 text-muted">
+            <p className="mt-2 text-xs leading-5 text-[#a9bbce]">
               Transaction intelligence and fraud analysis in one workspace.
             </p>
           </div>
         </div>
 
         <div className="px-5 pb-2 pt-6">
-          <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
+          <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8295aa]">
             Workspace
           </p>
           <NavItems tab={tab} setTab={setTab} />
         </div>
 
         <div className="mt-auto p-5">
-          <div className="rounded-xl border border-line bg-paper/70 p-4">
+          <div className="rounded-xl border border-[#26394d] bg-[#0d1b2a] p-4">
             <div className="flex items-center gap-2">
-              <span className="text-accent" aria-hidden="true">◇</span>
-              <p className="text-xs font-semibold text-ink">Detection engine</p>
+              <span className="text-[#2dd4bf]" aria-hidden="true">◇</span>
+              <p className="text-xs font-semibold text-[#e6f1fb]">
+                Detection engine
+              </p>
             </div>
 
-            <p className="mt-2 text-xs leading-5 text-muted">
+            <p className="mt-2 text-xs leading-5 text-[#a9bbce]">
               {apiEnabled
                 ? "API configured. Requests may fall back to demo scoring."
                 : "Demo scoring mode. Configure your API to enable model requests."}
@@ -304,16 +304,16 @@ export default function App() {
             <div className="mt-3 flex items-center gap-2">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
-                  apiEnabled ? "bg-accent" : "bg-medium"
+                  apiEnabled ? "bg-[#2dd4bf]" : "bg-[#facc15]"
                 }`}
               />
-              <span className="text-[11px] font-medium text-muted">
+              <span className="text-[11px] font-medium text-[#a9bbce]">
                 {apiEnabled ? "API configured" : "Demo mode"}
               </span>
             </div>
           </div>
 
-          <p className="mt-4 text-center text-[10px] text-muted">
+          <p className="mt-4 text-center text-[10px] text-[#8295aa]">
             FinGuard AI · Risk intelligence
           </p>
         </div>
@@ -322,54 +322,54 @@ export default function App() {
       {/* Main workspace */}
       <div className="min-w-0 flex-1">
         {/* Mobile brand header */}
-        <div className="border-b border-line/80 bg-panel/90 px-4 py-4 md:hidden">
+        <div className="border-b border-[#203448] bg-[#0b1726] px-4 py-4 md:hidden">
           <div className="flex items-center justify-between gap-3">
             <Brand compact />
 
-            <span className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent/5 px-2.5 py-1.5 text-[10px] font-semibold text-accent">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#2dd4bf]/20 bg-[#2dd4bf]/5 px-2.5 py-1.5 text-[10px] font-semibold text-[#5eead4]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#2dd4bf]" />
               {apiEnabled ? "API configured" : "Demo mode"}
             </span>
           </div>
         </div>
 
         {/* Top navigation bar */}
-        <header className="sticky top-0 z-20 border-b border-line/80 bg-paper/90 backdrop-blur-xl">
+        <header className="sticky top-0 z-20 border-b border-[#203448] bg-[#07111f]/95 backdrop-blur-xl">
           <div className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#91a4b7]">
                 FinGuard AI / Workspace
               </p>
 
-              <h1 className="mt-1 truncate text-lg font-semibold tracking-tight text-ink">
+              <h1 className="mt-1 truncate text-lg font-semibold tracking-tight text-[#e6f1fb]">
                 {currentTab.label}
               </h1>
             </div>
 
             <div className="flex min-w-0 items-center gap-3">
-              <div className="hidden items-center gap-2 rounded-full border border-line bg-panel px-3 py-2 sm:flex">
+              <div className="hidden items-center gap-2 rounded-full border border-[#203448] bg-[#0d1b2a] px-3 py-2 sm:flex">
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    apiEnabled ? "bg-accent" : "bg-medium"
+                    apiEnabled ? "bg-[#2dd4bf]" : "bg-[#facc15]"
                   }`}
                 />
-                <span className="text-xs text-muted">
+                <span className="text-xs text-[#a9bbce]">
                   {apiEnabled ? "FastAPI configured" : "Demo scorer"}
                 </span>
               </div>
 
-              <div className="hidden h-8 w-px bg-line sm:block" />
+              <div className="hidden h-8 w-px bg-[#203448] sm:block" />
 
               <div className="flex min-w-0 items-center gap-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/20 bg-accent/10 text-sm font-bold text-accent">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#2dd4bf]/20 bg-[#2dd4bf]/10 text-sm font-bold text-[#5eead4]">
                   {(user.email || "U").charAt(0).toUpperCase()}
                 </div>
 
                 <div className="hidden min-w-0 lg:block">
-                  <p className="max-w-[180px] truncate text-xs font-semibold text-ink">
+                  <p className="max-w-[180px] truncate text-xs font-semibold text-[#e6f1fb]">
                     {user.email || "Signed-in user"}
                   </p>
-                  <p className="mt-0.5 text-[10px] capitalize text-muted">
+                  <p className="mt-0.5 text-[10px] capitalize text-[#91a4b7]">
                     {role || "analyst"}
                   </p>
                 </div>
@@ -377,7 +377,7 @@ export default function App() {
 
               <button
                 type="button"
-                className={`${btnGhost} !rounded-xl !px-3 !py-2`}
+                className={`${btnGhost} !rounded-xl !border-[#26394d] !bg-[#0d1b2a] !px-3 !py-2 !text-[#cbd5e1] hover:!bg-[#172b40] hover:!text-white`}
                 onClick={() => signOut(auth)}
                 aria-label="Sign out of FinGuard AI"
                 title="Sign out"
@@ -402,7 +402,7 @@ export default function App() {
           </div>
 
           {/* Mobile navigation */}
-          <div className="border-t border-line/60 md:hidden">
+          <div className="border-t border-[#203448] md:hidden">
             <NavItems tab={tab} setTab={setTab} mobile />
           </div>
         </header>
@@ -412,20 +412,20 @@ export default function App() {
           {dataError && (
             <div
               role="alert"
-              className="mb-6 flex items-start gap-3 rounded-xl border border-critical/25 bg-critical/5 p-4"
+              className="mb-6 flex items-start gap-3 rounded-xl border border-[#fb7185]/30 bg-[#fb7185]/5 p-4"
             >
-              <span className="mt-0.5 text-critical" aria-hidden="true">
+              <span className="mt-0.5 text-[#fb7185]" aria-hidden="true">
                 !
               </span>
 
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-critical">
+                <p className="text-sm font-semibold text-[#fb7185]">
                   Data connection issue
                 </p>
-                <p className="mt-1 break-words text-xs leading-5 text-muted">
+                <p className="mt-1 break-words text-xs leading-5 text-[#a9bbce]">
                   {dataError}
                 </p>
-                <p className="mt-1 text-xs text-muted">
+                <p className="mt-1 text-xs text-[#91a4b7]">
                   Check your Firestore security rules and Firebase configuration.
                 </p>
               </div>
@@ -433,7 +433,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setDataError("")}
-                className="rounded-lg px-2 py-1 text-sm text-muted hover:bg-white/5 hover:text-ink"
+                className="rounded-lg px-2 py-1 text-sm text-[#91a4b7] hover:bg-white/5 hover:text-white"
                 aria-label="Dismiss error message"
               >
                 ×
@@ -473,7 +473,7 @@ export default function App() {
             )}
           </div>
 
-          <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line/70 py-5 text-[11px] text-muted">
+          <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-[#203448] py-5 text-[11px] text-[#91a4b7]">
             <p>FinGuard AI · Transaction risk intelligence</p>
             <p>Live data from your configured Firebase project</p>
           </footer>
