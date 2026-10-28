@@ -27,10 +27,62 @@ function throwStageError(stage, error) {
   throw new Error(`${stage}${code}: ${message}`);
 }
 
+function reportProgress(onProgress, percent, message) {
+  if (typeof onProgress !== "function") return;
+
+  try {
+    onProgress({
+      percent: Math.max(0, Math.min(100, percent)),
+      message,
+    });
+  } catch (error) {
+    // A UI progress callback must not interrupt transaction processing.
+    console.warn("[FinGuard AI] Progress callback failed:", error);
+  }
+}
+
+function countRiskLevels(rows) {
+  const counts = {
+    Critical: 0,
+    High: 0,
+    Medium: 0,
+    Low: 0,
+  };
+
+  for (const row of rows) {
+    const level = row.risk_level;
+
+    if (Object.hasOwn(counts, level)) {
+      counts[level] += 1;
+    }
+  }
+
+  return counts;
+}
+
+function buildPreprocessingSummary(report, unsupportedTypeRows, rowsScored) {
+  return {
+    originalRows: report.originalRows ?? 0,
+    emptyRowsRemoved: report.emptyRowsRemoved ?? 0,
+    validRows: report.validRows ?? 0,
+    rejectedRows: report.rejectedRows ?? 0,
+    exactDuplicateRows: report.exactDuplicateRows ?? 0,
+    dataQualityScore: report.dataQualityScore ?? 0,
+    unsupportedTypeRows,
+    rowsScored,
+    missingValues: report.missingValues ?? {},
+    invalidNumericValues: report.invalidNumericValues ?? {},
+    negativeValues: report.negativeValues ?? {},
+    duplicatePolicy: report.duplicatePolicy ?? "Not specified",
+    rejectedSamples: report.rejectedSamples ?? [],
+  };
+}
+
 export async function processRows(
   rawRows,
   user,
-  fileName = "upload.csv"
+  fileName = "upload.csv",
+  onProgress
 ) {
   if (!user?.uid) {
     throw new Error(
@@ -48,12 +100,15 @@ export async function processRows(
     inputRows: rawRows.length,
   });
 
+  reportProgress(onProgress, 5, "Validating transaction data…");
+
   // Stage 1: preprocess and validate transaction data.
   let cleanRows;
   let report;
 
   try {
     const result = preprocessRows(rawRows);
+
     cleanRows = result.rows;
     report = result.report;
 
@@ -65,6 +120,8 @@ export async function processRows(
   } catch (error) {
     throwStageError("Data preprocessing", error);
   }
+
+  reportProgress(onProgress, 15, "Filtering supported transaction types…");
 
   // Stage 2: keep only transaction types supported by the scorer.
   const supportedRows = cleanRows.filter((row) =>
@@ -80,16 +137,33 @@ export async function processRows(
     );
   }
 
+  console.log("[FinGuard AI] Preprocessing completed:", {
+    inputRows: rawRows.length,
+    validRows: cleanRows.length,
+    supportedRows: supportedRows.length,
+    unsupportedTypeRows,
+  });
+
+  reportProgress(
+    onProgress,
+    20,
+    `Scoring ${supportedRows.length.toLocaleString()} transactions…`
+  );
+
   // Stage 3: score transactions in manageable chunks.
   const startedAt = performance.now();
   const scored = [];
   const modes = new Set();
 
+  const totalScoringChunks = Math.ceil(
+    supportedRows.length / SCORING_CHUNK_SIZE
+  );
+
   try {
     for (
-      let start = 0;
+      let start = 0, chunkIndex = 0;
       start < supportedRows.length;
-      start += SCORING_CHUNK_SIZE
+      start += SCORING_CHUNK_SIZE, chunkIndex++
     ) {
       const chunk = supportedRows.slice(
         start,
@@ -106,6 +180,21 @@ export async function processRows(
 
       scored.push(...result.scored);
       modes.add(result.mode || "demo");
+
+      const scoringProgress =
+        20 +
+        Math.round(
+          ((chunkIndex + 1) / totalScoringChunks) * 45
+        );
+
+      reportProgress(
+        onProgress,
+        scoringProgress,
+        `Scoring transactions: ${Math.min(
+          start + chunk.length,
+          supportedRows.length
+        ).toLocaleString()} of ${supportedRows.length.toLocaleString()}`
+      );
     }
   } catch (error) {
     throwStageError("Transaction scoring", error);
@@ -119,18 +208,7 @@ export async function processRows(
     modes.size === 1 ? [...modes][0] : "mixed";
 
   // Stage 4: calculate risk-level counts.
-  const counts = {
-    Critical: 0,
-    High: 0,
-    Medium: 0,
-    Low: 0,
-  };
-
-  for (const row of scored) {
-    if (Object.hasOwn(counts, row.risk_level)) {
-      counts[row.risk_level] += 1;
-    }
-  }
+  const counts = countRiskLevels(scored);
 
   // Preserve the existing alert threshold and maximum.
   const alerts = scored
@@ -150,26 +228,29 @@ export async function processRows(
     0
   );
 
+  reportProgress(
+    onProgress,
+    68,
+    "Preparing preprocessing report and upload summary…"
+  );
+
   // Stage 5: prepare the preprocessing summary.
-  const preprocessingSummary = {
-    originalRows: report.originalRows,
-    emptyRowsRemoved: report.emptyRowsRemoved,
-    validRows: report.validRows,
-    rejectedRows: report.rejectedRows,
-    exactDuplicateRows: report.exactDuplicateRows,
-    dataQualityScore: report.dataQualityScore,
+  const preprocessingSummary = buildPreprocessingSummary(
+    report,
     unsupportedTypeRows,
-    rowsScored: scored.length,
-    missingValues: report.missingValues,
-    invalidNumericValues: report.invalidNumericValues,
-    negativeValues: report.negativeValues,
-    duplicatePolicy: report.duplicatePolicy,
-  };
+    scored.length
+  );
 
   // Stage 6: save the batch under the authenticated user's UID.
   let batchRef;
 
   try {
+    reportProgress(
+      onProgress,
+      72,
+      "Saving upload history…"
+    );
+
     batchRef = await addDoc(
       collection(db, "batches"),
       {
@@ -194,12 +275,18 @@ export async function processRows(
 
   // Stage 7: save alerts in chunks below Firestore's write limit.
   try {
+    const totalWriteChunks = Math.max(
+      1,
+      Math.ceil(alerts.length / FIRESTORE_WRITE_CHUNK_SIZE)
+    );
+
     for (
-      let i = 0;
+      let i = 0, chunkIndex = 0;
       i < alerts.length;
-      i += FIRESTORE_WRITE_CHUNK_SIZE
+      i += FIRESTORE_WRITE_CHUNK_SIZE, chunkIndex++
     ) {
       const writeGroup = writeBatch(db);
+
       const alertChunk = alerts.slice(
         i,
         i + FIRESTORE_WRITE_CHUNK_SIZE
@@ -214,14 +301,14 @@ export async function processRows(
           amount: row.amount,
           nameOrig: String(row.nameOrig ?? ""),
           nameDest: String(row.nameDest ?? ""),
-          oldbalanceOrg: row.oldbalanceOrg,
-          newbalanceOrig: row.newbalanceOrig,
-          oldbalanceDest: row.oldbalanceDest,
-          newbalanceDest: row.newbalanceDest,
-          fraud_prob: row.fraud_prob,
-          anomaly_score: row.anomaly_score,
-          risk_score: row.risk_score,
-          risk_level: row.risk_level,
+          oldbalanceOrg: row.oldbalanceOrg ?? 0,
+          newbalanceOrig: row.newbalanceOrig ?? 0,
+          oldbalanceDest: row.oldbalanceDest ?? 0,
+          newbalanceDest: row.newbalanceDest ?? 0,
+          fraud_prob: row.fraud_prob ?? null,
+          anomaly_score: row.anomaly_score ?? null,
+          risk_score: Number(row.risk_score),
+          risk_level: row.risk_level ?? "Low",
           status: "open",
           batchId: batchRef.id,
           uploadedBy: user.email || "",
@@ -232,10 +319,33 @@ export async function processRows(
 
       await writeGroup.commit();
 
+      const writeProgress =
+        75 +
+        Math.round(
+          ((chunkIndex + 1) / totalWriteChunks) * 23
+        );
+
+      reportProgress(
+        onProgress,
+        writeProgress,
+        `Saving alerts: ${Math.min(
+          i + alertChunk.length,
+          alerts.length
+        ).toLocaleString()} of ${alerts.length.toLocaleString()}`
+      );
+
       console.log("[FinGuard AI] Alerts saved:", {
         batchId: batchRef.id,
         savedInThisGroup: alertChunk.length,
       });
+    }
+
+    if (alerts.length === 0) {
+      reportProgress(
+        onProgress,
+        98,
+        "No alerts met the storage threshold. Finalizing report…"
+      );
     }
   } catch (error) {
     throwStageError(
@@ -251,7 +361,16 @@ export async function processRows(
     uid: user.uid,
   });
 
+  reportProgress(
+    onProgress,
+    100,
+    "Processing complete"
+  );
+
+  // Include the ID and filename so the UI can select this upload.
   return {
+    batchId: batchRef.id,
+    fileName,
     scanned: scored.length,
     alertCount: alerts.length,
     counts,
@@ -259,9 +378,7 @@ export async function processRows(
     scoringMs,
     mode,
     preprocessing: {
-      ...report,
-      unsupportedTypeRows,
-      rowsScored: scored.length,
+      ...preprocessingSummary,
     },
   };
 }

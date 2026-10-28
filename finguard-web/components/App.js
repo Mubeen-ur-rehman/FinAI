@@ -6,7 +6,9 @@ import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   collection,
   doc,
+  deleteDoc,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -140,7 +142,9 @@ function LoadingScreen() {
       <div className="fg-card fg-animate-in flex w-full max-w-sm flex-col items-center p-8 text-center">
         <Brand />
         <div className="mt-8 h-9 w-9 animate-spin rounded-full border-2 border-[#203448] border-t-[#2dd4bf]" />
-        <h1 className="mt-5 text-lg font-semibold">Securing your workspace</h1>
+        <h1 className="mt-5 text-lg font-semibold">
+          Securing your workspace
+        </h1>
         <p className="mt-2 text-sm text-[#91a4b7]">
           Checking your authentication status…
         </p>
@@ -157,45 +161,55 @@ export default function App() {
   const [batches, setBatches] = useState([]);
   const [focusAccount, setFocusAccount] = useState("");
   const [dataError, setDataError] = useState("");
+  const [uploadResult, setUploadResult] = useState(null);
+  const [selectedBatchId, setSelectedBatchId] = useState("");
+  const [deleteBusyId, setDeleteBusyId] = useState("");
 
-  // Firebase authentication and user profile.
+  // Authentication and user profile.
   useEffect(() => {
     let active = true;
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      if (!active) return;
-
-      setUser(currentUser);
-      setDataError("");
-      setAlerts([]);
-      setBatches([]);
-      setFocusAccount("");
-      setRole("analyst");
-
-      if (!currentUser) return;
-
-      try {
-        const profileRef = doc(db, "users", currentUser.uid);
-        const profileSnap = await getDoc(profileRef);
-
+    const unsubscribeAuth = onAuthStateChanged(
+      auth,
+      async (currentUser) => {
         if (!active) return;
 
-        if (profileSnap.exists()) {
-          setRole(profileSnap.data().role || "analyst");
-        } else {
-          await setDoc(profileRef, {
-            email: currentUser.email || "",
-            role: "analyst",
-          });
+        setUser(currentUser);
+        setDataError("");
+        setAlerts([]);
+        setBatches([]);
+        setFocusAccount("");
+        setRole("analyst");
+        setUploadResult(null);
+        setSelectedBatchId("");
 
-          if (active) setRole("analyst");
-        }
-      } catch (error) {
-        if (active) {
-          setDataError(error.message || "Unable to load your user profile.");
+        if (!currentUser) return;
+
+        try {
+          const profileRef = doc(db, "users", currentUser.uid);
+          const profileSnap = await getDoc(profileRef);
+
+          if (!active) return;
+
+          if (profileSnap.exists()) {
+            setRole(profileSnap.data().role || "analyst");
+          } else {
+            await setDoc(profileRef, {
+              email: currentUser.email || "",
+              role: "analyst",
+            });
+
+            if (active) setRole("analyst");
+          }
+        } catch (error) {
+          if (active) {
+            setDataError(
+              error.message || "Unable to load your user profile."
+            );
+          }
         }
       }
-    });
+    );
 
     return () => {
       active = false;
@@ -203,7 +217,7 @@ export default function App() {
     };
   }, []);
 
-  // Only subscribe to data owned by the currently signed-in user.
+  // Subscribe to the signed-in user's batches and alerts.
   useEffect(() => {
     if (!user?.uid) {
       setAlerts([]);
@@ -215,7 +229,9 @@ export default function App() {
 
     const onErr = (error) => {
       if (active) {
-        setDataError(error.message || "Unable to load Firestore data.");
+        setDataError(
+          error.message || "Unable to load Firestore data."
+        );
       }
     };
 
@@ -283,7 +299,68 @@ export default function App() {
     setTab("paths");
   };
 
-  const currentTab = TABS.find((item) => item.id === tab) || TABS[0];
+  // Delete a batch and its related alerts.
+  const handleDeleteBatch = async (batch) => {
+    if (!batch?.id || !user?.uid) return;
+
+    const confirmed = window.confirm(
+      `Delete upload "${batch.fileName || "Transaction batch"}" and its saved alerts? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setDeleteBusyId(batch.id);
+    setDataError("");
+
+    try {
+      const relatedAlertsQuery = query(
+        collection(db, "alerts"),
+        where("uploadedByUid", "==", user.uid),
+        where("batchId", "==", batch.id)
+      );
+
+      const alertSnapshot = await getDocs(relatedAlertsQuery);
+
+      // Delete in groups to avoid overwhelming Firestore.
+      for (let i = 0; i < alertSnapshot.docs.length; i += 400) {
+        const group = alertSnapshot.docs.slice(i, i + 400);
+
+        await Promise.all(
+          group.map((item) => deleteDoc(item.ref))
+        );
+      }
+
+      await deleteDoc(doc(db, "batches", batch.id));
+
+      if (selectedBatchId === batch.id) {
+        setSelectedBatchId("");
+      }
+
+      if (uploadResult?.batchId === batch.id) {
+        setUploadResult(null);
+      }
+    } catch (error) {
+      setDataError(
+        error?.message || "Unable to delete this upload."
+      );
+    } finally {
+      setDeleteBusyId("");
+    }
+  };
+
+  const selectedBatch = batches.find(
+    (batch) => batch.id === selectedBatchId
+  );
+
+  const visibleAlerts = selectedBatchId
+    ? alerts.filter(
+        (alert) => alert.batchId === selectedBatchId
+      )
+    : alerts;
+
+  const currentTab =
+    TABS.find((item) => item.id === tab) || TABS[0];
+
   const apiEnabled = Boolean(API_URL);
 
   return (
@@ -303,6 +380,7 @@ export default function App() {
                 Risk monitoring
               </span>
             </div>
+
             <p className="mt-2 text-xs leading-5 text-[#a9bbce]">
               Transaction intelligence and fraud analysis in one workspace.
             </p>
@@ -313,13 +391,17 @@ export default function App() {
           <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8295aa]">
             Workspace
           </p>
+
           <NavItems tab={tab} setTab={setTab} />
         </div>
 
         <div className="mt-auto p-5">
           <div className="rounded-xl border border-[#26394d] bg-[#0d1b2a] p-4">
             <div className="flex items-center gap-2">
-              <span className="text-[#2dd4bf]" aria-hidden="true">◇</span>
+              <span className="text-[#2dd4bf]" aria-hidden="true">
+                ◇
+              </span>
+
               <p className="text-xs font-semibold text-[#e6f1fb]">
                 Detection engine
               </p>
@@ -337,6 +419,7 @@ export default function App() {
                   apiEnabled ? "bg-[#2dd4bf]" : "bg-[#facc15]"
                 }`}
               />
+
               <span className="text-[11px] font-medium text-[#a9bbce]">
                 {apiEnabled ? "API configured" : "Demo mode"}
               </span>
@@ -363,7 +446,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Top navigation bar */}
+        {/* Top navigation */}
         <header className="sticky top-0 z-20 border-b border-[#203448] bg-[#07111f]/95 backdrop-blur-xl">
           <div className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
             <div className="min-w-0">
@@ -383,6 +466,7 @@ export default function App() {
                     apiEnabled ? "bg-[#2dd4bf]" : "bg-[#facc15]"
                   }`}
                 />
+
                 <span className="text-xs text-[#a9bbce]">
                   {apiEnabled ? "FastAPI configured" : "Demo scorer"}
                 </span>
@@ -399,6 +483,7 @@ export default function App() {
                   <p className="max-w-[180px] truncate text-xs font-semibold text-[#e6f1fb]">
                     {user.email || "Signed-in user"}
                   </p>
+
                   <p className="mt-0.5 text-[10px] capitalize text-[#91a4b7]">
                     {role || "analyst"}
                   </p>
@@ -426,6 +511,7 @@ export default function App() {
                   <path d="M15 12H3" />
                   <path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" />
                 </svg>
+
                 <span className="hidden sm:inline">Sign out</span>
               </button>
             </div>
@@ -444,7 +530,10 @@ export default function App() {
               role="alert"
               className="mb-6 flex items-start gap-3 rounded-xl border border-[#fb7185]/30 bg-[#fb7185]/5 p-4"
             >
-              <span className="mt-0.5 text-[#fb7185]" aria-hidden="true">
+              <span
+                className="mt-0.5 text-[#fb7185]"
+                aria-hidden="true"
+              >
                 !
               </span>
 
@@ -452,9 +541,11 @@ export default function App() {
                 <p className="text-sm font-semibold text-[#fb7185]">
                   Data connection issue
                 </p>
+
                 <p className="mt-1 break-words text-xs leading-5 text-[#a9bbce]">
                   {dataError}
                 </p>
+
                 <p className="mt-1 text-xs text-[#91a4b7]">
                   Check your Firestore security rules and Firebase configuration.
                 </p>
@@ -474,8 +565,13 @@ export default function App() {
           <div key={tab} className="fg-animate-in">
             {tab === "dashboard" && (
               <Dashboard
-                alerts={alerts}
+                alerts={visibleAlerts}
                 batches={batches}
+                selectedBatchId={selectedBatchId}
+                onSelectBatch={(id) => setSelectedBatchId(id)}
+                onDeleteBatch={handleDeleteBatch}
+                deleteBusyId={deleteBusyId}
+                onClearBatch={() => setSelectedBatchId("")}
                 goUpload={() => setTab("upload")}
               />
             )}
@@ -483,6 +579,14 @@ export default function App() {
             {tab === "upload" && (
               <UploadPanel
                 user={user}
+                initialResult={uploadResult}
+                onResult={(output) => {
+                  setUploadResult(output);
+
+                  if (output?.batchId) {
+                    setSelectedBatchId(output.batchId);
+                  }
+                }}
                 goAlerts={() => setTab("alerts")}
               />
             )}

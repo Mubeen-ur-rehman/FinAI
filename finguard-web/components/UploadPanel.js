@@ -3,6 +3,7 @@
 
 import { useRef, useState } from "react";
 import Papa from "papaparse";
+import { jsPDF } from "jspdf";
 import { processRows, generateDemoRows } from "@/lib/pipeline";
 import {
   Panel,
@@ -23,7 +24,7 @@ function Metric({ label, value }) {
 
 function IssueList({ title, values }) {
   const issues = Object.entries(values || {}).filter(
-    ([, count]) => count > 0
+    ([, count]) => Number(count) > 0
   );
 
   return (
@@ -53,62 +54,195 @@ function downloadPreprocessingReport(result) {
     return;
   }
 
-  const report = {
-    fileName: "FinGuard AI preprocessing report",
-    generatedAt: new Date().toISOString(),
-    scoringMode: result.mode,
+  const prep = result.preprocessing;
+  const pdf = new jsPDF();
 
-    scanSummary: {
-      rowsScored: result.scanned,
-      alertsSaved: result.alertCount,
-      scoringTimeMs: result.scoringMs,
-      amountAtRisk: result.amountAtRisk,
-      riskCounts: result.counts,
-    },
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 15;
+  const maxWidth = pageWidth - margin * 2;
 
-    preprocessing: result.preprocessing,
-  };
+  let y = 20;
 
-  const blob = new Blob(
-    [JSON.stringify(report, null, 2)],
-    { type: "application/json" }
+  function addPageIfNeeded(height = 8) {
+    if (y + height > pageHeight - 15) {
+      pdf.addPage();
+      y = 20;
+    }
+  }
+
+  function addHeading(text) {
+    addPageIfNeeded(12);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(13);
+    pdf.text(text, margin, y);
+    y += 8;
+  }
+
+  function addText(label, value) {
+    const text = `${label}: ${value ?? "N/A"}`;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+
+    const lines = pdf.splitTextToSize(text, maxWidth);
+
+    addPageIfNeeded(lines.length * 5 + 2);
+    pdf.text(lines, margin, y);
+    y += lines.length * 5 + 2;
+  }
+
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(20);
+  pdf.text("FinGuard AI", margin, y);
+  y += 10;
+
+  pdf.setFontSize(15);
+  pdf.text("Preprocessing Report", margin, y);
+  y += 10;
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9);
+  pdf.text(
+    `Generated: ${new Date().toLocaleString()}`,
+    margin,
+    y
+  );
+  y += 10;
+
+  addHeading("Upload Information");
+  addText("File name", result.fileName);
+  addText("Batch ID", result.batchId);
+  addText("Scoring mode", result.mode);
+
+  addHeading("Scan Summary");
+  addText("Rows scored", result.scanned);
+  addText("Alerts saved", result.alertCount);
+  addText("Scoring time (ms)", result.scoringMs);
+  addText("Amount at risk", result.amountAtRisk);
+
+  if (result.counts) {
+    addText("Risk counts", JSON.stringify(result.counts));
+  }
+
+  addHeading("Data Quality");
+  addText(
+    "Data quality score",
+    prep.dataQualityScore != null
+      ? `${prep.dataQualityScore}/100`
+      : "N/A"
+  );
+  addText("Original rows", prep.originalRows);
+  addText("Empty rows removed", prep.emptyRowsRemoved);
+  addText("Valid rows retained", prep.validRows);
+  addText("Rows rejected", prep.rejectedRows);
+  addText("Exact duplicates detected", prep.exactDuplicateRows);
+  addText("Unsupported types skipped", prep.unsupportedTypeRows);
+  addText("Rows scored", prep.rowsScored);
+  addText("Duplicate policy", prep.duplicatePolicy);
+
+  function addIssueSection(title, values) {
+    addHeading(title);
+
+    const entries = Object.entries(values || {});
+
+    if (!entries.length) {
+      addText("Result", "No issues reported.");
+      return;
+    }
+
+    entries.forEach(([column, count]) => {
+      addText(column, count);
+    });
+  }
+
+  addIssueSection(
+    "Missing Required Values",
+    prep.missingValues
   );
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+  addIssueSection(
+    "Invalid Numeric Values",
+    prep.invalidNumericValues
+  );
 
-  link.href = url;
-  link.download = "finguard-preprocessing-report.json";
+  addIssueSection(
+    "Negative Numeric Values",
+    prep.negativeValues
+  );
 
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+  addHeading("Sample Validation Issues");
 
-  window.setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 1000);
+  if (prep.rejectedSamples?.length) {
+    prep.rejectedSamples.forEach((sample) => {
+      addText("CSV row", sample.rowNumber);
+
+      (sample.reasons || []).forEach((reason) => {
+        addText("Issue", reason);
+      });
+    });
+  } else {
+    addText(
+      "Validation issues",
+      "No rejected samples available."
+    );
+  }
+
+  pdf.save("finguard-preprocessing-report.pdf");
 }
 
-export default function UploadPanel({ user, goAlerts }) {
+export default function UploadPanel({
+  user,
+  goAlerts,
+  initialResult = null,
+  onResult,
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(initialResult);
   const [drag, setDrag] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState("");
 
   const input = useRef(null);
 
-  async function run(rows, name) {
+  async function run(rows, name, baseProgress = 0) {
     setBusy(true);
     setError("");
     setResult(null);
+    onResult?.(null);
+
+    setProgress(baseProgress);
+    setStatus("Preparing transaction data...");
 
     try {
-      const output = await processRows(rows, user, name);
+      const output = await processRows(
+        rows,
+        user,
+        name,
+        ({ percent, message }) => {
+          // When a CSV file has already been read, continue
+          // from the file-reading progress instead of going backwards.
+          const mappedProgress =
+            baseProgress +
+            ((100 - baseProgress) * percent) / 100;
+
+          setProgress(Math.min(100, Math.round(mappedProgress)));
+          setStatus(message || "Processing transactions...");
+        }
+      );
+
       setResult(output);
+      onResult?.(output);
+
+      setProgress(100);
+      setStatus("Processing complete!");
     } catch (e) {
       setError(
         e?.message || "Unable to process the dataset."
       );
+
+      setStatus("Processing failed.");
     } finally {
       setBusy(false);
     }
@@ -119,35 +253,89 @@ export default function UploadPanel({ user, goAlerts }) {
 
     if (!file.name.toLowerCase().endsWith(".csv")) {
       setError("Please choose a CSV file.");
+      setStatus("");
+      setProgress(0);
       return;
     }
 
     setError("");
     setResult(null);
+    onResult?.(null);
 
-    Papa.parse(file, {
-      header: true,
-      dynamicTyping: true,
-      skipEmptyLines: "greedy",
+    setProgress(0);
+    setStatus("Reading CSV file...");
+    setBusy(true);
 
-      complete: (parsed) => {
-        if (parsed.errors?.length) {
-          setError(
-            `CSV parsing found ${parsed.errors.length} issue(s). ` +
-              `First issue: ${parsed.errors[0].message}.`
-          );
-          return;
-        }
+    const reader = new FileReader();
 
-        run(parsed.data, file.name);
-      },
-
-      error: (parseError) => {
-        setError(
-          parseError?.message || "Unable to read the CSV file."
+    reader.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percentage = Math.round(
+          (event.loaded / event.total) * 60
         );
-      },
-    });
+
+        setProgress(percentage);
+      }
+    };
+
+    reader.onload = () => {
+      setProgress(60);
+      setStatus("Validating CSV data...");
+
+      Papa.parse(reader.result, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: "greedy",
+
+        complete: async (parsed) => {
+          if (parsed.errors?.length) {
+            setError(
+              `CSV parsing found ${parsed.errors.length} issue(s). ` +
+                `First issue: ${parsed.errors[0].message}.`
+            );
+
+            setStatus("CSV validation failed.");
+            setBusy(false);
+            setProgress(0);
+            return;
+          }
+
+          if (!parsed.data?.length) {
+            setError(
+              "The CSV file contains no transaction rows."
+            );
+
+            setStatus("No data found.");
+            setBusy(false);
+            setProgress(0);
+            return;
+          }
+
+          // The file is read. Continue the progress bar from 60%.
+          await run(parsed.data, file.name, 60);
+        },
+
+        error: (parseError) => {
+          setError(
+            parseError?.message ||
+              "Unable to read the CSV file."
+          );
+
+          setStatus("CSV reading failed.");
+          setBusy(false);
+          setProgress(0);
+        },
+      });
+    };
+
+    reader.onerror = () => {
+      setError("Unable to read the selected file.");
+      setStatus("File reading failed.");
+      setBusy(false);
+      setProgress(0);
+    };
+
+    reader.readAsText(file);
   }
 
   const prep = result?.preprocessing;
@@ -161,7 +349,6 @@ export default function UploadPanel({ user, goAlerts }) {
 
   return (
     <div className="space-y-6">
-      {/* CSV upload panel */}
       <Panel title="Upload transactions">
         <div
           onDragOver={(event) => {
@@ -177,7 +364,7 @@ export default function UploadPanel({ user, goAlerts }) {
               handleFile(event.dataTransfer.files[0]);
             }
           }}
-          className={`rounded-lg border-2 border-dashed p-10 text-center ${
+          className={`rounded-lg border-2 border-dashed p-6 text-center transition-colors sm:p-10 ${
             drag
               ? "border-accent bg-accent/5"
               : "border-line"
@@ -230,27 +417,42 @@ export default function UploadPanel({ user, goAlerts }) {
           </div>
         </div>
 
-        {busy && (
-          <p
-            className="mt-4 text-sm text-muted"
-            role="status"
-          >
-            Validating data, preprocessing rows, scoring
-            transactions, and saving alerts…
-          </p>
+        {(busy || progress === 100) && status && (
+          <div className="mt-5 space-y-2" role="status">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted">{status}</span>
+
+              <span className="font-bold tabular-nums">
+                {progress}%
+              </span>
+            </div>
+
+            <div
+              className="h-4 w-full overflow-hidden rounded-full border border-black bg-white p-0.5"
+              role="progressbar"
+              aria-label="File processing progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+            >
+              <div
+                className="h-full rounded-full bg-accent transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
         )}
 
         {error && (
           <p
             role="alert"
-            className="mt-4 text-sm text-critical"
+            className="mt-4 break-words text-sm text-critical"
           >
             Upload failed: {error}
           </p>
         )}
       </Panel>
 
-      {/* Scan results */}
       {result && (
         <>
           <Panel
@@ -280,6 +482,7 @@ export default function UploadPanel({ user, goAlerts }) {
                 <dt className="text-muted">
                   Amount at risk
                 </dt>
+
                 <dd className="text-lg font-bold">
                   {money(result.amountAtRisk)}
                 </dd>
@@ -289,6 +492,7 @@ export default function UploadPanel({ user, goAlerts }) {
                 <dt className="text-muted">
                   Scoring time ({modeLabel})
                 </dt>
+
                 <dd className="text-lg font-bold">
                   {num(result.scoringMs)} ms
                 </dd>
@@ -296,7 +500,6 @@ export default function UploadPanel({ user, goAlerts }) {
             </dl>
           </Panel>
 
-          {/* Preprocessing and data-quality report */}
           {prep && (
             <Panel
               title="Preprocessing and data-quality report"
@@ -308,7 +511,7 @@ export default function UploadPanel({ user, goAlerts }) {
                     downloadPreprocessingReport(result)
                   }
                 >
-                  Download report
+                  Download PDF report
                 </button>
               }
             >
@@ -318,12 +521,13 @@ export default function UploadPanel({ user, goAlerts }) {
                 </p>
 
                 <p className="text-3xl font-bold">
-                  {prep.dataQualityScore}/100
+                  {prep.dataQualityScore ?? "N/A"}
+                  {prep.dataQualityScore != null ? "/100" : ""}
                 </p>
 
                 <p className="mt-1 text-xs text-muted">
-                  Heuristic score based on detected data-quality
-                  issues; it is not a fraud probability.
+                  This is a data-quality indicator, not a fraud
+                  probability.
                 </p>
               </div>
 
@@ -381,7 +585,7 @@ export default function UploadPanel({ user, goAlerts }) {
                 />
 
                 <p className="text-xs text-muted">
-                  Duplicate policy: {prep.duplicatePolicy}{" "}
+                  Duplicate policy: {prep.duplicatePolicy || "Not specified"}.
                   Unsupported transaction types are excluded
                   from scoring, not treated as malformed rows.
                 </p>
@@ -403,7 +607,7 @@ export default function UploadPanel({ user, goAlerts }) {
                           </p>
 
                           <ul className="list-disc pl-5 text-muted">
-                            {sample.reasons.map(
+                            {(sample.reasons || []).map(
                               (reason, index) => (
                                 <li
                                   key={`${sample.rowNumber}-${index}`}
