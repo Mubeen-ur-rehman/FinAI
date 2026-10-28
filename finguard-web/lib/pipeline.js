@@ -234,12 +234,22 @@ export async function processRows(
     "Preparing preprocessing report and upload summary…"
   );
 
-  // Stage 5: prepare the preprocessing summary.
-  const preprocessingSummary = buildPreprocessingSummary(
-    report,
+   // Stage 5: prepare the preprocessing summary.
+  const preprocessingSummary = {
+    originalRows: report.originalRows ?? 0,
+    emptyRowsRemoved: report.emptyRowsRemoved ?? 0,
+    validRows: report.validRows ?? 0,
+    rejectedRows: report.rejectedRows ?? 0,
+    exactDuplicateRows: report.exactDuplicateRows ?? 0,
+    dataQualityScore: report.dataQualityScore ?? 0,
     unsupportedTypeRows,
-    scored.length
-  );
+    rowsScored: scored.length,
+    missingValues: report.missingValues ?? {},
+    invalidNumericValues: report.invalidNumericValues ?? {},
+    negativeValues: report.negativeValues ?? {},
+    duplicatePolicy: report.duplicatePolicy ?? "Not specified",
+    rejectedSamples: report.rejectedSamples ?? [],
+  };
 
   // Stage 6: save the batch under the authenticated user's UID.
   let batchRef;
@@ -368,7 +378,7 @@ export async function processRows(
   );
 
   // Include the ID and filename so the UI can select this upload.
-  return {
+   return {
     batchId: batchRef.id,
     fileName,
     scanned: scored.length,
