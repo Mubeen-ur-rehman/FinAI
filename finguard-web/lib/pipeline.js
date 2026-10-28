@@ -8,7 +8,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "./firebase";
-import { FRAUD_TYPES } from "./scoring";
+import { FRAUD_TYPES, scoreRows } from "./scoring";
 import { preprocessRows } from "./preprocessing";
 
 const MAX_ALERTS_STORED = 500;
