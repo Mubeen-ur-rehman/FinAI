@@ -12,6 +12,7 @@ import {
   orderBy,
   query,
   setDoc,
+  where,
 } from "firebase/firestore";
 
 import { auth, db } from "@/lib/firebase";
@@ -159,51 +160,75 @@ export default function App() {
 
   // Firebase authentication and user profile.
   useEffect(() => {
-    return onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
+    let active = true;
 
-      if (!currentUser) {
-        setRole("analyst");
-        setAlerts([]);
-        setBatches([]);
-        return;
-      }
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (!active) return;
+
+      setUser(currentUser);
+      setDataError("");
+      setAlerts([]);
+      setBatches([]);
+      setFocusAccount("");
+      setRole("analyst");
+
+      if (!currentUser) return;
 
       try {
         const profileRef = doc(db, "users", currentUser.uid);
         const profileSnap = await getDoc(profileRef);
 
+        if (!active) return;
+
         if (profileSnap.exists()) {
           setRole(profileSnap.data().role || "analyst");
         } else {
           await setDoc(profileRef, {
-            email: currentUser.email,
+            email: currentUser.email || "",
             role: "analyst",
           });
-          setRole("analyst");
+
+          if (active) setRole("analyst");
         }
       } catch (error) {
-        setDataError(error.message || "Unable to load your user profile.");
+        if (active) {
+          setDataError(error.message || "Unable to load your user profile.");
+        }
       }
     });
+
+    return () => {
+      active = false;
+      unsubscribeAuth();
+    };
   }, []);
 
-  // Real-time Firestore subscriptions.
+  // Only subscribe to data owned by the currently signed-in user.
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) {
+      setAlerts([]);
+      setBatches([]);
+      return;
+    }
+
+    let active = true;
 
     const onErr = (error) => {
-      setDataError(error.message || "Unable to load Firestore data.");
+      if (active) {
+        setDataError(error.message || "Unable to load Firestore data.");
+      }
     };
 
     const alertsQuery = query(
       collection(db, "alerts"),
+      where("uploadedByUid", "==", user.uid),
       orderBy("risk_score", "desc"),
       limit(500)
     );
 
     const batchesQuery = query(
       collection(db, "batches"),
+      where("uploadedByUid", "==", user.uid),
       orderBy("createdAt", "desc"),
       limit(50)
     );
@@ -211,6 +236,8 @@ export default function App() {
     const unsubscribeAlerts = onSnapshot(
       alertsQuery,
       (snapshot) => {
+        if (!active) return;
+
         setAlerts(
           snapshot.docs.map((item) => ({
             id: item.id,
@@ -224,6 +251,8 @@ export default function App() {
     const unsubscribeBatches = onSnapshot(
       batchesQuery,
       (snapshot) => {
+        if (!active) return;
+
         setBatches(
           snapshot.docs.map((item) => ({
             id: item.id,
@@ -235,10 +264,11 @@ export default function App() {
     );
 
     return () => {
+      active = false;
       unsubscribeAlerts();
       unsubscribeBatches();
     };
-  }, [user]);
+  }, [user?.uid]);
 
   if (user === undefined) {
     return <LoadingScreen />;

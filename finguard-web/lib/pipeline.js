@@ -37,6 +37,11 @@ export async function processRows(
   user,
   fileName = "upload.csv"
 ) {
+  // Ensure an authenticated user is available.
+  if (!user?.uid) {
+    throw new Error("Please sign in before uploading transaction data.");
+  }
+
   // Stage 1: validate and preprocess the uploaded data.
   const { rows: cleanRows, report } = preprocessRows(rawRows);
 
@@ -95,7 +100,7 @@ export async function processRows(
       (counts[row.risk_level] || 0) + 1;
   }
 
-  // Preserve your existing alert threshold and storage limit.
+  // Preserve the existing alert threshold and storage limit.
   const alerts = scored
     .filter((row) => row.risk_score >= 40)
     .sort((a, b) => b.risk_score - a.risk_score)
@@ -122,6 +127,7 @@ export async function processRows(
     duplicatePolicy: report.duplicatePolicy,
   };
 
+  // Save batch with the authenticated user's UID.
   const batchRef = await addDoc(
     collection(db, "batches"),
     {
@@ -133,12 +139,14 @@ export async function processRows(
       scoringMs,
       mode,
       preprocessing: preprocessingSummary,
-      uploadedBy: user.email,
+      uploadedBy: user.email || "",
+      uploadedByUid: user.uid,
       createdAt: serverTimestamp(),
     }
   );
 
   // Stage 6: save alerts in safe Firestore write batches.
+  // Each alert is associated with the same authenticated user.
   for (let i = 0; i < alerts.length; i += 400) {
     const writeGroup = writeBatch(db);
 
@@ -159,7 +167,8 @@ export async function processRows(
         risk_level: row.risk_level,
         status: "open",
         batchId: batchRef.id,
-        uploadedBy: user.email,
+        uploadedBy: user.email || "",
+        uploadedByUid: user.uid,
         createdAt: serverTimestamp(),
       });
     });
@@ -185,6 +194,7 @@ export async function processRows(
 // Existing synthetic demo-data generator.
 export function generateDemoRows(n = 2000, frauds = 30) {
   const rnd = (a, b) => a + Math.random() * (b - a);
+
   const pick = (arr) =>
     arr[Math.floor(Math.random() * arr.length)];
 
@@ -217,9 +227,11 @@ export function generateDemoRows(n = 2000, frauds = 30) {
       });
     } else {
       const oldO = Math.round(rnd(5000, 400000));
+
       const amount = Math.round(
         rnd(100, Math.max(101, Math.min(oldO * 0.6, 120000)))
       );
+
       const oldD = Math.round(rnd(0, 800000));
 
       rows.push({
