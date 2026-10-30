@@ -337,4 +337,3 @@ export const FAQS = [
 
 export const FAQ_FALLBACK =
   "Sorry, I couldn't find a saved answer for that question. I can currently help with FinGuard AI features, dataset uploads, fraud detection, dashboard analytics, alerts, reports, accounts, and troubleshooting. Please choose one of the suggested questions or try different wording.";
-s
