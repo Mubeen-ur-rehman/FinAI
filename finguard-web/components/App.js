@@ -57,6 +57,7 @@ function Brand({ compact = false }) {
         <p className="truncate text-base font-bold tracking-tight text-[#f1f5f9]">
           FinGuard <span className="text-[#2dd4bf]">AI</span>
         </p>
+
         {!compact && (
           <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#94a3b8]">
             Intelligence platform
@@ -141,10 +142,13 @@ function LoadingScreen() {
     <div className="flex min-h-screen items-center justify-center bg-[#07111f] p-6 text-[#e6f1fb]">
       <div className="fg-card fg-animate-in flex w-full max-w-sm flex-col items-center p-8 text-center">
         <Brand />
+
         <div className="mt-8 h-9 w-9 animate-spin rounded-full border-2 border-[#203448] border-t-[#2dd4bf]" />
+
         <h1 className="mt-5 text-lg font-semibold">
           Securing your workspace
         </h1>
+
         <p className="mt-2 text-sm text-[#91a4b7]">
           Checking your authentication status…
         </p>
@@ -222,6 +226,7 @@ export default function App() {
     if (!user?.uid) {
       setAlerts([]);
       setBatches([]);
+      setSelectedBatchId("");
       return;
     }
 
@@ -269,12 +274,25 @@ export default function App() {
       (snapshot) => {
         if (!active) return;
 
-        setBatches(
-          snapshot.docs.map((item) => ({
-            id: item.id,
-            ...item.data(),
-          }))
-        );
+        const loadedBatches = snapshot.docs.map((item) => ({
+          id: item.id,
+          ...item.data(),
+        }));
+
+        setBatches(loadedBatches);
+
+        // Keep the selected batch if it still exists.
+        // Otherwise, select the latest available batch.
+        setSelectedBatchId((currentId) => {
+          if (
+            currentId &&
+            loadedBatches.some((batch) => batch.id === currentId)
+          ) {
+            return currentId;
+          }
+
+          return loadedBatches[0]?.id || "";
+        });
       },
       onErr
     );
@@ -321,7 +339,7 @@ export default function App() {
 
       const alertSnapshot = await getDocs(relatedAlertsQuery);
 
-      // Delete in groups to avoid overwhelming Firestore.
+      // Delete related alerts in groups.
       for (let i = 0; i < alertSnapshot.docs.length; i += 400) {
         const group = alertSnapshot.docs.slice(i, i + 400);
 
@@ -330,10 +348,19 @@ export default function App() {
         );
       }
 
+      // Delete the batch document.
       await deleteDoc(doc(db, "batches", batch.id));
 
       if (selectedBatchId === batch.id) {
-        setSelectedBatchId("");
+        const remainingBatches = batches
+          .filter((item) => item.id !== batch.id)
+          .sort((a, b) => {
+            const aTime = a.createdAt?.toMillis?.() || 0;
+            const bTime = b.createdAt?.toMillis?.() || 0;
+            return bTime - aTime;
+          });
+
+        setSelectedBatchId(remainingBatches[0]?.id || "");
       }
 
       if (uploadResult?.batchId === batch.id) {
@@ -348,15 +375,10 @@ export default function App() {
     }
   };
 
-  const selectedBatch = batches.find(
-    (batch) => batch.id === selectedBatchId
-  );
-
+  // Only alerts belonging to the selected batch are shown.
   const visibleAlerts = selectedBatchId
-    ? alerts.filter(
-        (alert) => alert.batchId === selectedBatchId
-      )
-    : alerts;
+    ? alerts.filter((alert) => alert.batchId === selectedBatchId)
+    : [];
 
   const currentTab =
     TABS.find((item) => item.id === tab) || TABS[0];
@@ -376,6 +398,7 @@ export default function App() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2dd4bf] opacity-30" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2dd4bf]" />
               </span>
+
               <span className="text-xs font-semibold text-[#5eead4]">
                 Risk monitoring
               </span>
@@ -593,7 +616,7 @@ export default function App() {
 
             {tab === "alerts" && (
               <AlertsTable
-                alerts={alerts}
+                alerts={visibleAlerts}
                 user={user}
                 onOpenPath={openPath}
               />
@@ -601,7 +624,7 @@ export default function App() {
 
             {tab === "paths" && (
               <PathMap
-                alerts={alerts}
+                alerts={visibleAlerts}
                 initial={focusAccount}
               />
             )}

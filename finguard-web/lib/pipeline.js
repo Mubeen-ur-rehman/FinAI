@@ -36,8 +36,10 @@ function reportProgress(onProgress, percent, message) {
       message,
     });
   } catch (error) {
-    // A UI progress callback must not interrupt transaction processing.
-    console.warn("[FinGuard AI] Progress callback failed:", error);
+    console.warn(
+      "[FinGuard AI] Progress callback failed:",
+      error
+    );
   }
 }
 
@@ -58,24 +60,6 @@ function countRiskLevels(rows) {
   }
 
   return counts;
-}
-
-function buildPreprocessingSummary(report, unsupportedTypeRows, rowsScored) {
-  return {
-    originalRows: report.originalRows ?? 0,
-    emptyRowsRemoved: report.emptyRowsRemoved ?? 0,
-    validRows: report.validRows ?? 0,
-    rejectedRows: report.rejectedRows ?? 0,
-    exactDuplicateRows: report.exactDuplicateRows ?? 0,
-    dataQualityScore: report.dataQualityScore ?? 0,
-    unsupportedTypeRows,
-    rowsScored,
-    missingValues: report.missingValues ?? {},
-    invalidNumericValues: report.invalidNumericValues ?? {},
-    negativeValues: report.negativeValues ?? {},
-    duplicatePolicy: report.duplicatePolicy ?? "Not specified",
-    rejectedSamples: report.rejectedSamples ?? [],
-  };
 }
 
 export async function processRows(
@@ -100,9 +84,13 @@ export async function processRows(
     inputRows: rawRows.length,
   });
 
-  reportProgress(onProgress, 5, "Validating transaction data…");
+  reportProgress(
+    onProgress,
+    5,
+    "Validating transaction data…"
+  );
 
-  // Stage 1: preprocess and validate transaction data.
+  // Stage 1: Preprocess and validate transaction data.
   let cleanRows;
   let report;
 
@@ -121,9 +109,13 @@ export async function processRows(
     throwStageError("Data preprocessing", error);
   }
 
-  reportProgress(onProgress, 15, "Filtering supported transaction types…");
+  reportProgress(
+    onProgress,
+    15,
+    "Filtering supported transaction types…"
+  );
 
-  // Stage 2: keep only transaction types supported by the scorer.
+  // Stage 2: Keep only supported transaction types.
   const supportedRows = cleanRows.filter((row) =>
     FRAUD_TYPES.includes(row.type)
   );
@@ -150,7 +142,7 @@ export async function processRows(
     `Scoring ${supportedRows.length.toLocaleString()} transactions…`
   );
 
-  // Stage 3: score transactions in manageable chunks.
+  // Stage 3: Score transactions in chunks.
   const startedAt = performance.now();
   const scored = [];
   const modes = new Set();
@@ -207,11 +199,12 @@ export async function processRows(
   const mode =
     modes.size === 1 ? [...modes][0] : "mixed";
 
-  // Stage 4: calculate risk-level counts.
+  // Stage 4: Calculate risk distribution for the full dataset.
   const counts = countRiskLevels(scored);
 
-  // Preserve the existing alert threshold and maximum.
-  const alerts = scored
+  // Stage 5: Identify ALL transactions meeting the alert threshold.
+  // These are used for accurate dashboard calculations.
+  const qualifyingAlerts = scored
     .filter(
       (row) =>
         Number.isFinite(Number(row.risk_score)) &&
@@ -220,13 +213,26 @@ export async function processRows(
     .sort(
       (a, b) =>
         Number(b.risk_score) - Number(a.risk_score)
-    )
-    .slice(0, MAX_ALERTS_STORED);
+    );
 
-  const amountAtRisk = alerts.reduce(
-    (sum, row) => sum + (Number(row.amount) || 0),
+  // Only store the highest-risk 500 alerts in Firestore.
+  const alerts = qualifyingAlerts.slice(
+    0,
+    MAX_ALERTS_STORED
+  );
+
+  // Calculate risk amount from ALL qualifying alerts,
+  // not just the 500 records stored in Firestore.
+  const amountAtRisk = qualifyingAlerts.reduce(
+    (sum, row) =>
+      sum + (Number(row.amount) || 0),
     0
   );
+
+  // Total generated alerts and stored alerts are different
+  // when the dataset produces more than 500 alerts.
+  const alertCount = qualifyingAlerts.length;
+  const storedAlertCount = alerts.length;
 
   reportProgress(
     onProgress,
@@ -234,7 +240,7 @@ export async function processRows(
     "Preparing preprocessing report and upload summary…"
   );
 
-   // Stage 5: prepare the preprocessing summary.
+  // Stage 6: Prepare preprocessing summary.
   const preprocessingSummary = {
     originalRows: report.originalRows ?? 0,
     emptyRowsRemoved: report.emptyRowsRemoved ?? 0,
@@ -251,7 +257,8 @@ export async function processRows(
     rejectedSamples: report.rejectedSamples ?? [],
   };
 
-  // Stage 6: save the batch under the authenticated user's UID.
+  // Stage 7: Save batch information.
+  // Every upload gets its own Firestore batch document.
   let batchRef;
 
   try {
@@ -265,10 +272,18 @@ export async function processRows(
       collection(db, "batches"),
       {
         fileName,
+
+        // Full dataset statistics.
         scanned: scored.length,
-        alertCount: alerts.length,
+        alertCount,
+        storedAlertCount,
+
+        // Full dataset risk distribution.
         counts,
+
+        // Amount calculated from all qualifying alerts.
         amountAtRisk,
+
         scoringMs,
         mode,
         preprocessing: preprocessingSummary,
@@ -278,16 +293,24 @@ export async function processRows(
       }
     );
 
-    console.log("[FinGuard AI] Batch saved:", batchRef.id);
+    console.log("[FinGuard AI] Batch saved:", {
+      batchId: batchRef.id,
+      scanned: scored.length,
+      alertCount,
+      storedAlertCount,
+      amountAtRisk,
+    });
   } catch (error) {
     throwStageError("Saving upload batch", error);
   }
 
-  // Stage 7: save alerts in chunks below Firestore's write limit.
+  // Stage 8: Save alerts with the correct batch ID.
   try {
     const totalWriteChunks = Math.max(
       1,
-      Math.ceil(alerts.length / FIRESTORE_WRITE_CHUNK_SIZE)
+      Math.ceil(
+        alerts.length / FIRESTORE_WRITE_CHUNK_SIZE
+      )
     );
 
     for (
@@ -303,26 +326,37 @@ export async function processRows(
       );
 
       for (const row of alertChunk) {
-        const alertRef = doc(collection(db, "alerts"));
+        const alertRef = doc(
+          collection(db, "alerts")
+        );
 
         writeGroup.set(alertRef, {
           step: row.step,
           type: row.type,
           amount: row.amount,
+
           nameOrig: String(row.nameOrig ?? ""),
           nameDest: String(row.nameDest ?? ""),
+
           oldbalanceOrg: row.oldbalanceOrg ?? 0,
           newbalanceOrig: row.newbalanceOrig ?? 0,
           oldbalanceDest: row.oldbalanceDest ?? 0,
           newbalanceDest: row.newbalanceDest ?? 0,
+
           fraud_prob: row.fraud_prob ?? null,
           anomaly_score: row.anomaly_score ?? null,
+
           risk_score: Number(row.risk_score),
           risk_level: row.risk_level ?? "Low",
+
           status: "open",
+
+          // Important: Connect every alert to its own batch.
           batchId: batchRef.id,
+
           uploadedBy: user.email || "",
           uploadedByUid: user.uid,
+
           createdAt: serverTimestamp(),
         });
       }
@@ -367,7 +401,9 @@ export async function processRows(
   console.log("[FinGuard AI] Processing completed:", {
     batchId: batchRef.id,
     scanned: scored.length,
-    alertCount: alerts.length,
+    alertCount,
+    storedAlertCount,
+    amountAtRisk,
     uid: user.uid,
   });
 
@@ -377,12 +413,14 @@ export async function processRows(
     "Processing complete"
   );
 
-  // Include the ID and filename so the UI can select this upload.
-   return {
+  // Stage 9: Return results to the frontend.
+  // App.js uses batchId to select the newly processed dataset.
+  return {
     batchId: batchRef.id,
     fileName,
     scanned: scored.length,
-    alertCount: alerts.length,
+    alertCount,
+    storedAlertCount,
     counts,
     amountAtRisk,
     scoringMs,
@@ -395,7 +433,8 @@ export async function processRows(
 
 // Synthetic demo-data generator.
 export function generateDemoRows(n = 2000, frauds = 30) {
-  const rnd = (a, b) => a + Math.random() * (b - a);
+  const rnd = (a, b) =>
+    a + Math.random() * (b - a);
 
   const pick = (arr) =>
     arr[Math.floor(Math.random() * arr.length)];
@@ -414,7 +453,9 @@ export function generateDemoRows(n = 2000, frauds = 30) {
     const step = Math.floor(rnd(1, 300));
 
     if (isFraud) {
-      const amount = Math.round(rnd(80000, 900000));
+      const amount = Math.round(
+        rnd(80000, 900000)
+      );
 
       rows.push({
         step,
@@ -428,16 +469,23 @@ export function generateDemoRows(n = 2000, frauds = 30) {
         newbalanceDest: 0,
       });
     } else {
-      const oldO = Math.round(rnd(5000, 400000));
+      const oldO = Math.round(
+        rnd(5000, 400000)
+      );
 
       const amount = Math.round(
         rnd(
           100,
-          Math.max(101, Math.min(oldO * 0.6, 120000))
+          Math.max(
+            101,
+            Math.min(oldO * 0.6, 120000)
+          )
         )
       );
 
-      const oldD = Math.round(rnd(0, 800000));
+      const oldD = Math.round(
+        rnd(0, 800000)
+      );
 
       rows.push({
         step,
@@ -453,5 +501,7 @@ export function generateDemoRows(n = 2000, frauds = 30) {
     }
   }
 
-  return rows.sort(() => Math.random() - 0.5);
+  return rows.sort(
+    () => Math.random() - 0.5
+  );
 }
