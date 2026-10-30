@@ -2,7 +2,7 @@
 import { FAQS, FAQ_FALLBACK } from "./chatbotFAQs";
 
 function normalize(text) {
-  return text
+  return String(text ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -15,6 +15,8 @@ function getTokens(text) {
     "on", "for", "my", "me", "do", "does", "how",
     "can", "i", "what", "why", "where", "and",
     "it", "this", "that", "please", "with",
+    "are", "was", "were", "be", "will", "would",
+    "could", "should", "your", "you", "about",
   ]);
 
   return normalize(text)
@@ -32,48 +34,67 @@ export function findFAQ(userQuestion) {
     };
   }
 
+  if (!Array.isArray(FAQS) || FAQS.length === 0) {
+    return {
+      answer: FAQ_FALLBACK,
+      faq: null,
+    };
+  }
+
   let bestMatch = null;
   let bestScore = 0;
 
   const userTokens = new Set(getTokens(question));
 
   for (const faq of FAQS) {
+    if (!faq || typeof faq.question !== "string" || !faq.answer) {
+      continue;
+    }
+
+    const keywords = Array.isArray(faq.keywords)
+      ? faq.keywords
+      : [];
+
     const candidates = [
       faq.question,
-      ...faq.keywords,
-    ].map(normalize);
+      ...keywords.filter((keyword) => typeof keyword === "string"),
+    ].map(normalize).filter(Boolean);
 
     let score = 0;
 
     for (const candidate of candidates) {
+      // Exact question or keyword match
       if (question === candidate) {
         score = Math.max(score, 1);
         continue;
       }
 
+      // Strong phrase match
       if (
         candidate.length >= 5 &&
-        (question.includes(candidate) || candidate.includes(question))
+        (
+          question.includes(candidate) ||
+          candidate.includes(question)
+        )
       ) {
         score = Math.max(score, 0.9);
       }
 
       const candidateTokens = getTokens(candidate);
+
+      if (candidateTokens.length === 0 || userTokens.size === 0) {
+        continue;
+      }
+
       const matched = candidateTokens.filter((token) =>
         userTokens.has(token)
       ).length;
 
-      const overlap =
-        candidateTokens.length > 0
-          ? matched / candidateTokens.length
-          : 0;
+      const overlap = matched / candidateTokens.length;
+      const coverage = matched / userTokens.size;
 
-      const coverage =
-        userTokens.size > 0
-          ? matched / userTokens.size
-          : 0;
-
-      const combinedScore = overlap * 0.65 + coverage * 0.35;
+      const combinedScore =
+        overlap * 0.65 + coverage * 0.35;
 
       score = Math.max(score, combinedScore);
     }
@@ -84,7 +105,7 @@ export function findFAQ(userQuestion) {
     }
   }
 
-  // Avoid displaying unrelated answers for vague questions.
+  // Return fallback when no sufficiently relevant FAQ is found
   if (!bestMatch || bestScore < 0.48) {
     return {
       answer: FAQ_FALLBACK,

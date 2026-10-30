@@ -221,10 +221,9 @@ export default function App() {
     };
   }, []);
 
-  // Subscribe to the signed-in user's batches and alerts.
+  // Subscribe to the signed-in user's batches.
   useEffect(() => {
     if (!user?.uid) {
-      setAlerts([]);
       setBatches([]);
       setSelectedBatchId("");
       return;
@@ -232,41 +231,11 @@ export default function App() {
 
     let active = true;
 
-    const onErr = (error) => {
-      if (active) {
-        setDataError(
-          error.message || "Unable to load Firestore data."
-        );
-      }
-    };
-
-    const alertsQuery = query(
-      collection(db, "alerts"),
-      where("uploadedByUid", "==", user.uid),
-      orderBy("risk_score", "desc"),
-      limit(500)
-    );
-
     const batchesQuery = query(
       collection(db, "batches"),
       where("uploadedByUid", "==", user.uid),
       orderBy("createdAt", "desc"),
       limit(50)
-    );
-
-    const unsubscribeAlerts = onSnapshot(
-      alertsQuery,
-      (snapshot) => {
-        if (!active) return;
-
-        setAlerts(
-          snapshot.docs.map((item) => ({
-            id: item.id,
-            ...item.data(),
-          }))
-        );
-      },
-      onErr
     );
 
     const unsubscribeBatches = onSnapshot(
@@ -294,15 +263,68 @@ export default function App() {
           return loadedBatches[0]?.id || "";
         });
       },
-      onErr
+      (error) => {
+        if (active) {
+          setDataError(
+            error.message || "Unable to load uploaded datasets."
+          );
+        }
+      }
+    );
+
+    return () => {
+      active = false;
+      unsubscribeBatches();
+    };
+  }, [user?.uid]);
+
+  // Subscribe only to alerts belonging to the selected dataset.
+  useEffect(() => {
+    let active = true;
+
+    // Clear old dataset alerts immediately when selection changes.
+    setAlerts([]);
+
+    if (!user?.uid || !selectedBatchId) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const selectedAlertsQuery = query(
+      collection(db, "alerts"),
+      where("uploadedByUid", "==", user.uid),
+      where("batchId", "==", selectedBatchId),
+      orderBy("risk_score", "desc"),
+      limit(500)
+    );
+
+    const unsubscribeAlerts = onSnapshot(
+      selectedAlertsQuery,
+      (snapshot) => {
+        if (!active) return;
+
+        setAlerts(
+          snapshot.docs.map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+        );
+      },
+      (error) => {
+        if (active) {
+          setDataError(
+            error.message || "Unable to load alerts for this dataset."
+          );
+        }
+      }
     );
 
     return () => {
       active = false;
       unsubscribeAlerts();
-      unsubscribeBatches();
     };
-  }, [user?.uid]);
+  }, [user?.uid, selectedBatchId]);
 
   if (user === undefined) {
     return <LoadingScreen />;
@@ -375,10 +397,7 @@ export default function App() {
     }
   };
 
-  // Only alerts belonging to the selected batch are shown.
-  const visibleAlerts = selectedBatchId
-    ? alerts.filter((alert) => alert.batchId === selectedBatchId)
-    : [];
+  const visibleAlerts = alerts;
 
   const currentTab =
     TABS.find((item) => item.id === tab) || TABS[0];

@@ -2,7 +2,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FAQS, FAQ_CATEGORIES, FAQ_FALLBACK } from "@/lib/chatbotFAQs";
+import {
+  FAQS,
+  FAQ_CATEGORIES,
+  FAQ_FALLBACK,
+} from "@/lib/chatbotFAQs";
 import { findFAQ } from "@/lib/chatbotMatcher";
 
 export default function Chatbot() {
@@ -13,6 +17,7 @@ export default function Chatbot() {
   const [feedback, setFeedback] = useState({});
   const [showQuestions, setShowQuestions] = useState(true);
 
+  // Search and filter FAQs.
   const filteredFAQs = useMemo(() => {
     const query = search.trim().toLowerCase();
 
@@ -20,31 +25,42 @@ export default function Chatbot() {
       const matchesCategory =
         category === "All" || faq.category === category;
 
+      const keywords = Array.isArray(faq.keywords)
+        ? faq.keywords
+        : [];
+
       const matchesSearch =
         !query ||
         faq.question.toLowerCase().includes(query) ||
-        faq.keywords.some((word) =>
-          word.toLowerCase().includes(query)
+        keywords.some((word) =>
+          String(word).toLowerCase().includes(query)
         );
 
       return matchesCategory && matchesSearch;
     }).slice(0, 12);
   }, [search, category]);
 
+  // Send a question and generate the FAQ response.
   function askQuestion(question) {
-    const result = findFAQ(question);
+    const cleanQuestion = question.trim();
+
+    if (!cleanQuestion) return;
+
+    const result = findFAQ(cleanQuestion);
+
+    const timestamp = Date.now();
 
     const userMessage = {
-      id: Date.now() + "-user",
+      id: `${timestamp}-user`,
       role: "user",
-      text: question,
+      text: cleanQuestion,
     };
 
     const botMessage = {
-      id: Date.now() + "-bot",
+      id: `${timestamp}-bot`,
       role: "bot",
-      text: result.answer || FAQ_FALLBACK,
-      faq: result.faq,
+      text: result?.answer || FAQ_FALLBACK,
+      faq: result?.faq || null,
     };
 
     setMessages((previous) => [
@@ -57,6 +73,7 @@ export default function Chatbot() {
     setShowQuestions(false);
   }
 
+  // Handle input submission.
   function handleSubmit(event) {
     event.preventDefault();
 
@@ -67,6 +84,7 @@ export default function Chatbot() {
     askQuestion(question);
   }
 
+  // Start a fresh conversation.
   function resetChat() {
     setMessages([]);
     setSearch("");
@@ -81,7 +99,12 @@ export default function Chatbot() {
       <button
         type="button"
         onClick={() => setIsOpen((previous) => !previous)}
-        aria-label={isOpen ? "Close FinGuard Assistant" : "Open FinGuard Assistant"}
+        aria-label={
+          isOpen
+            ? "Close FinGuard Assistant"
+            : "Open FinGuard Assistant"
+        }
+        aria-expanded={isOpen}
         className="fixed bottom-6 right-6 z-[9999] flex h-16 w-16 items-center justify-center rounded-full border border-cyan-300/30 bg-gradient-to-br from-cyan-400 to-teal-500 text-3xl text-slate-950 shadow-[0_0_30px_rgba(34,211,238,0.25)] transition duration-300 hover:scale-110"
       >
         {isOpen ? "×" : "✦"}
@@ -104,6 +127,7 @@ export default function Chatbot() {
                 <h3 className="font-bold text-white">
                   FinGuard Assistant
                 </h3>
+
                 <p className="text-xs text-cyan-300">
                   Your website help center
                 </p>
@@ -115,6 +139,7 @@ export default function Chatbot() {
                 type="button"
                 onClick={resetChat}
                 title="New conversation"
+                aria-label="Start new conversation"
                 className="rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-white/10"
               >
                 ↻
@@ -132,21 +157,29 @@ export default function Chatbot() {
           </div>
 
           {/* Conversation */}
-          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+          <div
+            className="flex-1 space-y-4 overflow-y-auto p-4"
+            aria-live="polite"
+            aria-relevant="additions"
+          >
+            {/* Welcome screen */}
             {messages.length === 0 && (
               <div className="space-y-4">
                 <div className="max-w-[95%] rounded-2xl rounded-tl-sm border border-cyan-400/10 bg-[#122F43] p-4 text-sm leading-6 text-slate-200">
                   <p className="mb-2 font-semibold text-cyan-300">
                     Welcome to FinGuard AI! 👋
                   </p>
+
                   I can help you understand the dashboard, upload
                   datasets, fraud detection, alerts, reports, and
                   common website issues.
+
                   <p className="mt-2 text-xs text-slate-400">
                     Choose a question or type your own below.
                   </p>
                 </div>
 
+                {/* FAQ browser */}
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <h4 className="text-sm font-semibold text-white">
@@ -166,12 +199,14 @@ export default function Chatbot() {
 
                   {showQuestions && (
                     <>
+                      {/* Categories */}
                       <div className="mb-3 flex gap-2 overflow-x-auto pb-2">
                         {["All", ...FAQ_CATEGORIES].map((item) => (
                           <button
                             key={item}
                             type="button"
                             onClick={() => setCategory(item)}
+                            aria-pressed={category === item}
                             className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition ${
                               category === item
                                 ? "border-cyan-400 bg-cyan-400/15 text-cyan-300"
@@ -183,6 +218,7 @@ export default function Chatbot() {
                         ))}
                       </div>
 
+                      {/* FAQ questions */}
                       <div className="space-y-2">
                         {filteredFAQs.map((faq) => (
                           <button
@@ -192,6 +228,7 @@ export default function Chatbot() {
                             className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-left text-sm text-slate-200 transition hover:border-cyan-400/40 hover:bg-cyan-400/[0.06]"
                           >
                             <span>{faq.question}</span>
+
                             <span className="shrink-0 text-cyan-300">
                               →
                             </span>
@@ -210,6 +247,7 @@ export default function Chatbot() {
               </div>
             )}
 
+            {/* Chat messages */}
             {messages.map((message) => (
               <div
                 key={message.id}
@@ -220,7 +258,7 @@ export default function Chatbot() {
                 }`}
               >
                 <div
-                  className={`max-w-[90%] rounded-2xl p-3 text-sm leading-6 ${
+                  className={`max-w-[90%] whitespace-pre-wrap break-words rounded-2xl p-3 text-sm leading-6 ${
                     message.role === "user"
                       ? "rounded-tr-sm bg-cyan-500 text-slate-950"
                       : "rounded-tl-sm border border-white/10 bg-[#122F43] text-slate-200"
@@ -236,7 +274,8 @@ export default function Chatbot() {
                           : "FinGuard Help Center"}
                       </p>
 
-                      <div className="flex items-center gap-3">
+                      {/* Feedback */}
+                      <div className="flex flex-wrap items-center gap-3">
                         <span className="text-xs text-slate-400">
                           Helpful?
                         </span>
@@ -248,6 +287,9 @@ export default function Chatbot() {
                               ...previous,
                               [message.id]: "yes",
                             }))
+                          }
+                          aria-pressed={
+                            feedback[message.id] === "yes"
                           }
                           className={`text-xs ${
                             feedback[message.id] === "yes"
@@ -265,6 +307,9 @@ export default function Chatbot() {
                               ...previous,
                               [message.id]: "no",
                             }))
+                          }
+                          aria-pressed={
+                            feedback[message.id] === "no"
                           }
                           className={`text-xs ${
                             feedback[message.id] === "no"
@@ -290,6 +335,8 @@ export default function Chatbot() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Ask about FinGuard AI..."
+                aria-label="Ask FinGuard AI a question"
+                autoComplete="off"
                 className="min-w-0 flex-1 rounded-xl border border-white/10 bg-[#102B3F] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
               />
 
