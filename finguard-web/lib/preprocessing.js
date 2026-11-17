@@ -1,5 +1,5 @@
 
-import { REQUIRED_COLUMNS } from "./scoring";
+const DEFAULT_REQUIRED_COLUMNS = ["amount", "type"];
 
 const NUMERIC_COLUMNS = [
   "step",
@@ -12,355 +12,368 @@ const NUMERIC_COLUMNS = [
 
 const IDENTIFIER_COLUMNS = ["nameOrig", "nameDest"];
 
-const isBlank = (value) =>
-  value === null ||
-  value === undefined ||
-  (typeof value === "string" && value.trim() === "");
+const OPTIONAL_COLUMNS = [
+  "step",
+  "nameOrig",
+  "nameDest",
+  "oldbalanceOrg",
+  "newbalanceOrig",
+  "oldbalanceDest",
+  "newbalanceDest",
+  "isFraud",
+];
 
-const isRowObject = (row) =>
-  row !== null &&
-  typeof row === "object" &&
-  !Array.isArray(row);
-
-const addReason = (reasons, reason) => {
-  if (!reasons.includes(reason)) {
-    reasons.push(reason);
-  }
-};
-
-const normalizeHeaders = (row) => {
-  const normalized = {};
-
-  for (const [key, value] of Object.entries(row)) {
-    const cleanKey = key.trim();
-
-    if (!cleanKey) {
-      throw new Error("The CSV contains an empty column header.");
-    }
-
-    if (Object.hasOwn(normalized, cleanKey)) {
-      throw new Error(
-        `Duplicate column header after trimming: ${cleanKey}`
-      );
-    }
-
-    normalized[cleanKey] = value;
-  }
-
-  return normalized;
-};
-
-const normalizeNumericValue = (value) => {
-  if (typeof value !== "number" && typeof value !== "string") {
-    return { valid: false };
-  }
-
-  if (isBlank(value)) {
-    return { valid: false, missing: true };
-  }
-
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return { valid: false };
-  }
-
-  return { valid: true, value: number };
-};
-
-const createCounter = (columns) =>
-  Object.fromEntries(columns.map((column) => [column, 0]));
-
-const calculateQualityScore = ({
-  nonEmptyRows,
-  validRows,
-  missingValues,
-  invalidNumericValues,
-  negativeValues,
-  exactDuplicateRows,
-}) => {
-  if (nonEmptyRows === 0) {
-    return 0;
-  }
-
-  const requiredCellCount =
-    nonEmptyRows * REQUIRED_COLUMNS.length;
-
-  const numericCellCount =
-    nonEmptyRows * NUMERIC_COLUMNS.length;
-
-  const missingCount = Object.values(missingValues).reduce(
-    (sum, count) => sum + count,
-    0
+function isEmpty(value) {
+  return (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
   );
+}
 
-  const invalidNumericCount = Object.values(
-    invalidNumericValues
-  ).reduce((sum, count) => sum + count, 0);
+function normalizeNumber(value) {
+  if (isEmpty(value)) return null;
 
-  const negativeCount = Object.values(negativeValues).reduce(
-    (sum, count) => sum + count,
-    0
-  );
+  const normalized =
+    typeof value === "string" ? value.trim().replace(/,/g, "") : value;
 
-  const completeness = Math.max(
-    0,
-    1 - missingCount / Math.max(1, requiredCellCount)
-  );
+  const number = Number(normalized);
 
-  const rowValidity = validRows / nonEmptyRows;
+  return Number.isFinite(number) ? number : NaN;
+}
 
-  const numericValidity = Math.max(
-    0,
-    1 -
-      (invalidNumericCount + negativeCount) /
-        Math.max(1, numericCellCount)
-  );
-
-  const uniqueness = Math.max(
-    0,
-    1 - exactDuplicateRows / Math.max(1, validRows)
-  );
-
-  // Custom heuristic, not a standardized data-quality metric.
-  const score =
-    completeness * 40 +
-    rowValidity * 30 +
-    numericValidity * 20 +
-    uniqueness * 10;
-
-  return Math.max(0, Math.min(100, Math.round(score)));
-};
-
-export function preprocessRows(rawRows) {
-  if (!Array.isArray(rawRows) || rawRows.length === 0) {
-    throw new Error("The dataset contains no rows.");
+function applyColumnMapping(rows, mapping = null) {
+  if (!Array.isArray(rows)) {
+    throw new Error("Mapping input must be an array of rows.");
   }
 
-  // Find a row containing the CSV headers.
-  const headerRow = rawRows.find(
-    (row) => isRowObject(row) && Object.keys(row).length > 0
-  );
-
-  if (!headerRow) {
-    throw new Error(
-      "The dataset contains no usable column headers."
-    );
+  if (!mapping || typeof mapping !== "object") {
+    return rows.map((row) => ({ ...row }));
   }
 
-  const normalizedHeaderRow = normalizeHeaders(headerRow);
-  const columns = Object.keys(normalizedHeaderRow);
+  return rows.map((row) => {
+    const mappedRow = { ...row };
 
-  const missingColumns = REQUIRED_COLUMNS.filter(
-    (column) => !columns.includes(column)
+    // Mapping direction: source column -> FinGuard standard column.
+    // Example: { payment_value: "amount" }
+    Object.entries(mapping).forEach(([sourceColumn, standardColumn]) => {
+      if (!sourceColumn || !standardColumn) return;
+
+      if (
+        Object.prototype.hasOwnProperty.call(row, sourceColumn) &&
+        !isEmpty(row[sourceColumn])
+      ) {
+        mappedRow[standardColumn] = row[sourceColumn];
+      }
+    });
+
+    return mappedRow;
+  });
+}
+
+function getDuplicateKey(row) {
+  const keys = Object.keys(row).sort();
+
+  return JSON.stringify(
+    keys.map((key) => {
+      const value = row[key];
+
+      return isEmpty(value) ? null : String(value).trim();
+    })
   );
+}
 
-  if (missingColumns.length > 0) {
-    throw new Error(
-      `Missing required columns: ${missingColumns.join(", ")}`
-    );
+function preprocessRows(
+  rawRows,
+  {
+    mapping = null,
+    requiredColumns = DEFAULT_REQUIRED_COLUMNS,
+  } = {}
+) {
+  if (!Array.isArray(rawRows)) {
+    throw new Error("Preprocessing input must be an array of rows.");
   }
 
-  const missingValues = createCounter(REQUIRED_COLUMNS);
-  const invalidNumericValues = createCounter(NUMERIC_COLUMNS);
-  const negativeValues = createCounter(NUMERIC_COLUMNS);
+  if (rawRows.length === 0) {
+    return {
+      rows: [],
+      report: {
+        originalRows: 0,
+        nonEmptyRows: 0,
+        emptyRows: 0,
+        validRows: 0,
+        rejectedRows: 0,
+        duplicateRows: 0,
+        malformedRows: 0,
+        qualityScore: 0,
+        originalColumns: [],
+        mappedColumns: [],
+        missingValues: 0,
+        invalidNumericValues: 0,
+        negativeValues: 0,
+        invalidFraudLabels: 0,
+        rejectedSamples: [],
+        duplicatePolicy: "Duplicates are reported but retained.",
+        notes: ["The uploaded dataset contains no transaction rows."],
+      },
+    };
+  }
 
-  const validRows = [];
+  const originalColumns = [
+    ...new Set(rawRows.flatMap((row) => Object.keys(row || {}))),
+  ];
+
+  const mappedRows = applyColumnMapping(rawRows, mapping);
+
+  const mappedColumns = [
+    ...new Set(mappedRows.flatMap((row) => Object.keys(row || {}))),
+  ];
+
+  const required = Array.isArray(requiredColumns)
+    ? requiredColumns
+    : DEFAULT_REQUIRED_COLUMNS;
+
+  const acceptedRows = [];
   const rejectedSamples = [];
+  const seenRows = new Set();
 
-  let emptyRowsRemoved = 0;
-  let rejectedRows = 0;
+  let emptyRows = 0;
   let nonEmptyRows = 0;
   let malformedRows = 0;
+  let duplicateRows = 0;
+  let missingValues = 0;
+  let invalidNumericValues = 0;
+  let negativeValues = 0;
+  let invalidFraudLabels = 0;
+  let validNumericChecks = 0;
+  let totalNumericChecks = 0;
 
-  const recordRejectedRow = (rowNumber, reasons) => {
-    rejectedRows++;
-
-    if (rejectedSamples.length < 10) {
+  const rejectRow = (row, rowNumber, reasons) => {
+    if (rejectedSamples.length < 20) {
       rejectedSamples.push({
-        rowNumber,
-        reasons: [...new Set(reasons)],
+        rowNumber: rowNumber + 1,
+        reasons,
+        row: { ...row },
       });
     }
   };
 
-  for (let index = 0; index < rawRows.length; index++) {
-    const rawRow = rawRows[index];
-    const rowNumber = index + 2;
-
-    // Safely reject malformed records.
-    if (!isRowObject(rawRow)) {
-      malformedRows++;
-      recordRejectedRow(rowNumber, [
-        "Row is not a valid CSV record.",
-      ]);
-      continue;
-    }
-
-    let row;
-
-    try {
-      row = normalizeHeaders(rawRow);
-    } catch (error) {
-      malformedRows++;
-      recordRejectedRow(rowNumber, [
-        error instanceof Error
-          ? error.message
-          : "Unable to normalize column headers.",
-      ]);
-      continue;
-    }
-
-    // Remove rows containing no actual values.
-    const hasValues = Object.values(row).some(
-      (value) => !isBlank(value)
-    );
-
-    if (!hasValues) {
-      emptyRowsRemoved++;
-      continue;
-    }
-
-    nonEmptyRows++;
-
+  mappedRows.forEach((originalRow, index) => {
+    const rowNumber = index;
+    const row = { ...(originalRow || {}) };
     const reasons = [];
 
-    // Check every required field for missing data.
-    for (const column of REQUIRED_COLUMNS) {
-      if (isBlank(row[column])) {
-        missingValues[column]++;
-
-        addReason(
-          reasons,
-          `Missing required value: ${column}`
-        );
-      }
+    if (
+      !originalRow ||
+      typeof originalRow !== "object" ||
+      Array.isArray(originalRow)
+    ) {
+      malformedRows += 1;
+      rejectRow({}, rowNumber, ["Invalid row format."]);
+      return;
     }
 
-    // Standardize identifiers without changing their case.
-    for (const column of IDENTIFIER_COLUMNS) {
-      if (!isBlank(row[column])) {
-        row[column] = String(row[column]).trim();
-      }
+    const hasAnyValue = Object.values(row).some(
+      (value) => !isEmpty(value)
+    );
+
+    if (!hasAnyValue) {
+      emptyRows += 1;
+      return;
     }
 
-    // Standardize transaction types.
-    if (!isBlank(row.type)) {
+    nonEmptyRows += 1;
+
+    // Check required fields.
+    required.forEach((column) => {
+      if (isEmpty(row[column])) {
+        missingValues += 1;
+        reasons.push(`Missing required field: ${column}`);
+      }
+    });
+
+    // Normalize transaction type.
+    if (!isEmpty(row.type)) {
       row.type = String(row.type).trim().toUpperCase();
     }
 
-    // Validate numeric fields.
-    for (const column of NUMERIC_COLUMNS) {
-      const result = normalizeNumericValue(row[column]);
+    // Normalize numeric fields.
+    NUMERIC_COLUMNS.forEach((column) => {
+      const value = row[column];
 
-      if (!result.valid) {
-        if (!result.missing) {
-          invalidNumericValues[column]++;
+      if (isEmpty(value)) {
+        row[column] = null;
 
-          addReason(
-            reasons,
-            `Invalid numeric value: ${column}`
-          );
-        } else if (!isBlank(row[column])) {
-          addReason(
-            reasons,
-            `Invalid numeric value: ${column}`
-          );
+        if (required.includes(column)) {
+          reasons.push(`Missing required numeric field: ${column}`);
         }
 
-        continue;
+        return;
       }
 
-      row[column] = result.value;
+      totalNumericChecks += 1;
 
-      if (column === "step" && !Number.isInteger(row[column])) {
-        addReason(reasons, "step must be an integer.");
+      const number = normalizeNumber(value);
+
+      if (!Number.isFinite(number)) {
+        invalidNumericValues += 1;
+        reasons.push(`Invalid numeric value in ${column}`);
+        return;
       }
 
-      if (row[column] < 0) {
-        negativeValues[column]++;
-
-        addReason(
-          reasons,
-          `${column} cannot be negative.`
-        );
+      if (number < 0) {
+        negativeValues += 1;
+        reasons.push(`Negative value is not allowed in ${column}`);
+        return;
       }
+
+      if (column === "step" && !Number.isInteger(number)) {
+        invalidNumericValues += 1;
+        reasons.push("The step field must be a whole number.");
+        return;
+      }
+
+      validNumericChecks += 1;
+      row[column] = number;
+    });
+
+    // Normalize sender and receiver identifiers.
+    IDENTIFIER_COLUMNS.forEach((column) => {
+      if (isEmpty(row[column])) {
+        row[column] = null;
+
+        if (required.includes(column)) {
+          reasons.push(`Missing required identifier: ${column}`);
+        }
+
+        return;
+      }
+
+      row[column] = String(row[column]).trim();
+    });
+
+    // Optional fraud label: if supplied, it must be 0 or 1.
+    if (!isEmpty(row.isFraud)) {
+      const fraudLabel = normalizeNumber(row.isFraud);
+
+      if (
+        !Number.isFinite(fraudLabel) ||
+        (fraudLabel !== 0 && fraudLabel !== 1)
+      ) {
+        invalidFraudLabels += 1;
+        reasons.push("isFraud must contain only 0 or 1.");
+      } else {
+        row.isFraud = fraudLabel;
+      }
+    } else if ("isFraud" in row) {
+      row.isFraud = null;
     }
 
     if (reasons.length > 0) {
-      recordRejectedRow(rowNumber, reasons);
-      continue;
+      rejectRow(row, rowNumber, reasons);
+      return;
     }
 
-    validRows.push(row);
-  }
+    // Detect exact duplicate rows. Duplicates are retained.
+    const duplicateKey = getDuplicateKey(row);
 
-  if (validRows.length === 0) {
-    throw new Error(
-      `No valid rows remain. ${rejectedRows} rows were rejected.`
-    );
-  }
-
-  // Detect exact duplicate rows without deleting them.
-  const seen = new Set();
-  let exactDuplicateRows = 0;
-
-  for (const row of validRows) {
-    const fingerprint = JSON.stringify(
-      Object.keys(row)
-        .sort()
-        .map((key) => [key, row[key]])
-    );
-
-    if (seen.has(fingerprint)) {
-      exactDuplicateRows++;
+    if (seenRows.has(duplicateKey)) {
+      duplicateRows += 1;
     } else {
-      seen.add(fingerprint);
+      seenRows.add(duplicateKey);
     }
-  }
 
-  const dataQualityScore = calculateQualityScore({
-    nonEmptyRows,
-    validRows: validRows.length,
-    missingValues,
-    invalidNumericValues,
-    negativeValues,
-    exactDuplicateRows,
+    acceptedRows.push(row);
   });
 
-  return {
-    rows: validRows,
+  const validRows = acceptedRows.length;
+  const rejectedRows = nonEmptyRows - validRows;
 
+  const completenessScore =
+    nonEmptyRows > 0
+      ? Math.max(
+          0,
+          100 - (missingValues / (nonEmptyRows * Math.max(required.length, 1))) * 100
+        )
+      : 0;
+
+  const validityScore =
+    nonEmptyRows > 0 ? (validRows / nonEmptyRows) * 100 : 0;
+
+  const numericScore =
+    totalNumericChecks > 0
+      ? (validNumericChecks / totalNumericChecks) * 100
+      : 100;
+
+  const uniquenessScore =
+    validRows > 0
+      ? ((validRows - duplicateRows) / validRows) * 100
+      : 100;
+
+  const qualityScore = Math.round(
+    completenessScore * 0.4 +
+      validityScore * 0.3 +
+      numericScore * 0.2 +
+      uniquenessScore * 0.1
+  );
+
+  const notes = [];
+
+  if (emptyRows > 0) {
+    notes.push(`${emptyRows} completely empty rows were ignored.`);
+  }
+
+  if (rejectedRows > 0) {
+    notes.push(`${rejectedRows} rows were rejected because of validation errors.`);
+  }
+
+  if (duplicateRows > 0) {
+    notes.push(
+      `${duplicateRows} duplicate rows were detected. They were retained.`
+    );
+  }
+
+  if (!mappedColumns.includes("isFraud")) {
+    notes.push(
+      "No fraud label was provided. The dataset can still be scored."
+    );
+  }
+
+  if (!mappedColumns.includes("step")) {
+    notes.push(
+      "No step/timestamp field was provided. Timestamp-based analysis may be limited."
+    );
+  }
+
+  return {
+    rows: acceptedRows,
     report: {
       originalRows: rawRows.length,
       nonEmptyRows,
-      emptyRowsRemoved,
-      malformedRows,
-      validRows: validRows.length,
+      emptyRows,
+      validRows,
       rejectedRows,
-      exactDuplicateRows,
-      dataQualityScore,
-
+      duplicateRows,
+      malformedRows,
+      qualityScore,
+      originalColumns,
+      mappedColumns,
       missingValues,
       invalidNumericValues,
       negativeValues,
-
+      invalidFraudLabels,
       rejectedSamples,
-
-      duplicatePolicy:
-        "Exact duplicates are detected and preserved for review.",
-
-      dataQualityScoreMethod:
-        "Custom heuristic: completeness 40%, row validity 30%, numeric validity 20%, and uniqueness 10%.",
-
-      notes: [
-        "Only rows with valid required fields are retained.",
-        "Negative numeric values are rejected.",
-        "Transaction types are normalized but not restricted to TRANSFER or CASH_OUT.",
-        "Exact duplicate transactions are reported but not automatically removed.",
-        "Blank lines already removed by the CSV parser cannot be counted here.",
-        "Row numbers are approximate CSV line numbers.",
-      ],
+      duplicatePolicy: "Duplicates are reported but retained.",
+      notes,
     },
   };
 }
+
+export {
+  DEFAULT_REQUIRED_COLUMNS,
+  NUMERIC_COLUMNS,
+  OPTIONAL_COLUMNS,
+  IDENTIFIER_COLUMNS,
+  applyColumnMapping,
+  preprocessRows,
+};

@@ -1,11 +1,9 @@
 
-// Risk scoring modes:
-// 1) NEXT_PUBLIC_API_URL is set: use FastAPI model.
-// 2) API is unavailable or returns invalid data: use demo scorer.
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
 
-export const FRAUD_TYPES = ["TRANSFER", "CASH_OUT"];
+const FRAUD_TYPES = ["TRANSFER", "CASH_OUT"];
 
-export const REQUIRED_COLUMNS = [
+const REQUIRED_COLUMNS = [
   "step",
   "type",
   "amount",
@@ -17,293 +15,236 @@ export const REQUIRED_COLUMNS = [
   "newbalanceDest",
 ];
 
-export const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || ""
-).trim().replace(/\/+$/, "");
+const RISK_THRESHOLDS = {
+  critical: 80,
+  high: 60,
+  medium: 40,
+};
 
-export function riskLevel(score) {
+function getRiskLevel(score) {
   const value = Number(score);
 
   if (!Number.isFinite(value)) return "Low";
-  if (value >= 80) return "Critical";
-  if (value >= 60) return "High";
-  if (value >= 40) return "Medium";
+  if (value >= RISK_THRESHOLDS.critical) return "Critical";
+  if (value >= RISK_THRESHOLDS.high) return "High";
+  if (value >= RISK_THRESHOLDS.medium) return "Medium";
 
   return "Low";
 }
 
-export function combineScore(fraudProb, anomaly) {
+function combineScore(fraudProb, anomalyScore) {
   const fraud = Number(fraudProb);
-  const anomalyValue = Number(anomaly);
+  const anomaly = Number(anomalyScore);
 
   if (
     !Number.isFinite(fraud) ||
-    !Number.isFinite(anomalyValue)
+    !Number.isFinite(anomaly) ||
+    fraud < 0 ||
+    fraud > 1 ||
+    anomaly < 0 ||
+    anomaly > 1
   ) {
-    throw new Error("Invalid fraud or anomaly score.");
+    throw new Error("Invalid model scores. Expected values between 0 and 1.");
   }
 
-  return Math.round(
-    100 * (0.85 * fraud + 0.15 * anomalyValue)
-  );
+  return Math.round(100 * (0.85 * fraud + 0.15 * anomaly));
 }
 
-// Same engineered features as the Python pipeline (ml/features.py).
-function features(row) {
-  const amount = Number(row.amount) || 0;
-  const oldO = Number(row.oldbalanceOrg) || 0;
-  const newO = Number(row.newbalanceOrig) || 0;
-  const oldD = Number(row.oldbalanceDest) || 0;
-  const newD = Number(row.newbalanceDest) || 0;
+function validateModelResult(result, index) {
+  const fraudProb = Number(result?.fraud_prob);
+  const anomalyScore = Number(result?.anomaly_score);
 
-  return {
-    amount,
-    errorOrig: newO + amount - oldO,
-    errorDest: oldD + amount - newD,
-    emptied: oldO > 0 && newO === 0,
-    ratio: amount / (oldO + 1),
-    destUntouched: oldD === 0 && newD === 0,
-  };
-}
-
-// Built-in rule-based demo scorer.
-function demoScore(row) {
-  const f = features(row);
-
-  let z = -6;
-
-  if (f.emptied) z += 3;
-  if (f.ratio >= 0.95) z += 1.5;
-  if (f.destUntouched) z += 1.5;
-  if (Math.abs(f.errorDest) > 0.5 * f.amount) z += 1;
-  if (f.amount > 200000) z += 1;
-
-  const fraud_prob = 1 / (1 + Math.exp(-z));
-
-  const anomaly_score = Math.min(
-    1,
-    Math.log10(Math.max(0, f.amount) + 1) / 7
-  );
-
-  return {
-    fraud_prob,
-    anomaly_score,
-  };
-}
-
-// Validate FastAPI results before using them.
-function validateApiResults(results, expectedLength) {
-  if (!Array.isArray(results)) {
+  if (
+    !Number.isFinite(fraudProb) ||
+    !Number.isFinite(anomalyScore) ||
+    fraudProb < 0 ||
+    fraudProb > 1 ||
+    anomalyScore < 0 ||
+    anomalyScore > 1
+  ) {
     throw new Error(
-      "API response does not contain a valid results array."
+      `Invalid scoring result at row ${index + 1}. Expected fraud_prob and anomaly_score between 0 and 1.`
     );
   }
 
-  if (results.length !== expectedLength) {
+  const riskScore = combineScore(fraudProb, anomalyScore);
+
+  return {
+    fraud_prob: fraudProb,
+    anomaly_score: anomalyScore,
+    risk_score: riskScore,
+    risk_level: getRiskLevel(riskScore),
+  };
+}
+
+function scoreDemoRow(row) {
+  const amount = Math.max(0, Number(row.amount) || 0);
+  const oldBalance = Math.max(0, Number(row.oldbalanceOrg) || 0);
+  const newBalance = Math.max(0, Number(row.newbalanceOrig) || 0);
+  const type = String(row.type || "").toUpperCase();
+
+  let fraudProb = 0.05;
+  let anomalyScore = 0.05;
+
+  if (type === "TRANSFER") {
+    fraudProb += 0.25;
+    anomalyScore += 0.15;
+  }
+
+  if (type === "CASH_OUT") {
+    fraudProb += 0.2;
+    anomalyScore += 0.2;
+  }
+
+  if (amount > 100000) {
+    fraudProb += 0.2;
+    anomalyScore += 0.2;
+  } else if (amount > 50000) {
+    fraudProb += 0.1;
+    anomalyScore += 0.1;
+  }
+
+  if (oldBalance > 0 && amount > oldBalance) {
+    fraudProb += 0.2;
+    anomalyScore += 0.15;
+  }
+
+  if (oldBalance > 0 && newBalance === 0) {
+    fraudProb += 0.1;
+    anomalyScore += 0.1;
+  }
+
+  fraudProb = Math.min(0.99, fraudProb);
+  anomalyScore = Math.min(0.99, anomalyScore);
+
+  const riskScore = combineScore(fraudProb, anomalyScore);
+
+  return {
+    ...row,
+    fraud_prob: fraudProb,
+    anomaly_score: anomalyScore,
+    risk_score: riskScore,
+    risk_level: getRiskLevel(riskScore),
+  };
+}
+
+async function scoreRows(rows, { allowDemoFallback = false } = {}) {
+  if (!Array.isArray(rows)) {
+    throw new Error("Scoring input must be an array of transaction rows.");
+  }
+
+  if (rows.length === 0) {
+    return {
+      scored: [],
+      mode: "api",
+    };
+  }
+
+  if (!API_URL) {
+    if (allowDemoFallback) {
+      return {
+        scored: rows.map(scoreDemoRow),
+        mode: "demo",
+      };
+    }
+
     throw new Error(
-      `API returned ${results.length} results, but ${expectedLength} were expected.`
+      "FastAPI URL is not configured. Add NEXT_PUBLIC_API_URL to your .env.local file."
     );
   }
 
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-
-    const fraudProb = Number(result?.fraud_prob);
-    const anomalyScore = Number(result?.anomaly_score);
-
-    if (
-      !Number.isFinite(fraudProb) ||
-      !Number.isFinite(anomalyScore)
-    ) {
-      throw new Error(
-        `Invalid scoring values returned for transaction ${i + 1}.`
-      );
-    }
-
-    if (
-      fraudProb < 0 ||
-      fraudProb > 1 ||
-      anomalyScore < 0 ||
-      anomalyScore > 1
-    ) {
-      throw new Error(
-        `Scoring values must be between 0 and 1. Transaction: ${i + 1}.`
-      );
-    }
-  }
-
-  return results;
-}
-
-// Send a batch to the FastAPI scoring service.
-async function apiScore(rows) {
-  const response = await fetch(
-    `${API_URL}/score-batch`,
-    {
+  try {
+    const response = await fetch(`${API_URL}/score-batch`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ rows }),
-    }
-  );
+    });
 
-  if (!response.ok) {
-    throw new Error(
-      `API returned HTTP ${response.status}.`
-    );
-  }
+    let data;
 
-  const data = await response.json();
-
-  return validateApiResults(
-    data?.results,
-    rows.length
-  );
-}
-
-// Returns:
-// {
-//   scored: rows with fraud_prob, anomaly_score,
-//           risk_score and risk_level,
-//   mode: "api" | "demo"
-// }
-export async function scoreRows(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error(
-      "Scoring requires a non-empty array of transactions."
-    );
-  }
-
-  let results = null;
-  let mode = "demo";
-
-  // Try the FastAPI model first when configured.
-  if (API_URL) {
     try {
-      results = await apiScore(rows);
-      mode = "api";
-    } catch (error) {
-      console.warn(
-        "[FinGuard AI] API scoring failed. Using demo scorer:",
-        error?.message || error
+      data = await response.json();
+    } catch {
+      throw new Error("FastAPI returned an invalid JSON response.");
+    }
+
+    if (!response.ok) {
+      const detail =
+        typeof data?.detail === "string"
+          ? data.detail
+          : data?.detail?.message;
+
+      throw new Error(
+        detail || `FastAPI scoring failed with HTTP ${response.status}.`
       );
     }
-  }
 
-  // Use demo scoring if the API is unavailable or invalid.
-  if (!results) {
-    results = rows.map(demoScore);
-    mode = "demo";
-  }
+    if (!Array.isArray(data?.results)) {
+      throw new Error(
+        "Invalid FastAPI response: expected a results array."
+      );
+    }
 
-  const scored = rows.map((row, index) => {
-    const result = results[index];
+    if (data.results.length !== rows.length) {
+      throw new Error(
+        `Scoring result count mismatch. Sent ${rows.length} rows but received ${data.results.length} results.`
+      );
+    }
 
-    const fraud_prob = Number(result.fraud_prob);
-    const anomaly_score = Number(result.anomaly_score);
-
-    const risk_score = combineScore(
-      fraud_prob,
-      anomaly_score
-    );
+    const scored = rows.map((row, index) => ({
+      ...row,
+      ...validateModelResult(data.results[index], index),
+    }));
 
     return {
-      ...row,
-      fraud_prob,
-      anomaly_score,
-      risk_score,
-      risk_level: riskLevel(risk_score),
+      scored,
+      mode: "api",
+    };
+  } catch (error) {
+    if (allowDemoFallback) {
+      return {
+        scored: rows.map(scoreDemoRow),
+        mode: "demo",
+      };
+    }
+
+    throw error;
+  }
+}
+
+function generateDemoRows(count = 100) {
+  const total = Math.max(1, Math.min(Number(count) || 100, 10000));
+  const types = ["TRANSFER", "CASH_OUT", "PAYMENT", "CASH_IN"];
+
+  return Array.from({ length: total }, (_, index) => {
+    const type = types[Math.floor(Math.random() * types.length)];
+    const amount = Math.round(100 + Math.random() * 150000);
+    const oldBalance = Math.round(Math.random() * 200000);
+
+    return {
+      step: index + 1,
+      type,
+      amount,
+      nameOrig: `SENDER_${1000 + index}`,
+      oldbalanceOrg: oldBalance,
+      newbalanceOrig: Math.max(0, oldBalance - amount),
+      nameDest: `RECEIVER_${2000 + index}`,
+      oldbalanceDest: Math.round(Math.random() * 200000),
+      newbalanceDest: Math.round(Math.random() * 300000),
     };
   });
-
-  return {
-    scored,
-    mode,
-  };
 }
 
-// Synthetic demo-data generator.
-export function generateDemoRows(n = 2000, frauds = 30) {
-  const rnd = (a, b) =>
-    a + Math.random() * (b - a);
-
-  const pick = (arr) =>
-    arr[Math.floor(Math.random() * arr.length)];
-
-  const mules = [
-    "C900000001",
-    "C900000002",
-    "C900000003",
-  ];
-
-  const rows = [];
-
-  const totalRows = Math.max(
-    0,
-    Math.floor(Number(n) || 0)
-  );
-
-  const fraudCount = Math.min(
-    totalRows,
-    Math.max(0, Math.floor(Number(frauds) || 0))
-  );
-
-  for (let i = 0; i < totalRows; i++) {
-    const isFraud = i < fraudCount;
-    const type = pick(FRAUD_TYPES);
-    const step = Math.floor(rnd(1, 300));
-
-    if (isFraud) {
-      const amount = Math.round(
-        rnd(80000, 900000)
-      );
-
-      rows.push({
-        step,
-        type,
-        amount,
-        nameOrig: `C${Math.floor(rnd(1e8, 9e8))}`,
-        oldbalanceOrg: amount,
-        newbalanceOrig: 0,
-        nameDest: pick(mules),
-        oldbalanceDest: 0,
-        newbalanceDest: 0,
-      });
-    } else {
-      const oldO = Math.round(
-        rnd(5000, 400000)
-      );
-
-      const amount = Math.round(
-        rnd(
-          100,
-          Math.max(
-            101,
-            Math.min(oldO * 0.6, 120000)
-          )
-        )
-      );
-
-      const oldD = Math.round(
-        rnd(0, 800000)
-      );
-
-      rows.push({
-        step,
-        type,
-        amount,
-        nameOrig: `C${Math.floor(rnd(1e8, 9e8))}`,
-        oldbalanceOrg: oldO,
-        newbalanceOrig: oldO - amount,
-        nameDest: `C${Math.floor(rnd(1e8, 9e8))}`,
-        oldbalanceDest: oldD,
-        newbalanceDest: oldD + amount,
-      });
-    }
-  }
-
-  return rows.sort(
-    () => Math.random() - 0.5
-  );
-}
+export {
+  API_URL,
+  FRAUD_TYPES,
+  REQUIRED_COLUMNS,
+  RISK_THRESHOLDS,
+  getRiskLevel,
+  combineScore,
+  scoreDemoRow,
+  scoreRows,
+  generateDemoRows,
+};

@@ -28,10 +28,30 @@ import PathMap from "./PathMap";
 import { btnGhost } from "./ui";
 
 const TABS = [
-  { id: "dashboard", label: "Overview", icon: "◫", description: "Risk analytics" },
-  { id: "upload", label: "Analyze data", icon: "↥", description: "Import transactions" },
-  { id: "alerts", label: "Fraud alerts", icon: "⌁", description: "Review flagged activity" },
-  { id: "paths", label: "Path analysis", icon: "⌘", description: "Explore account paths" },
+  {
+    id: "dashboard",
+    label: "Overview",
+    icon: "◫",
+    description: "Risk analytics",
+  },
+  {
+    id: "upload",
+    label: "Analyze data",
+    icon: "↥",
+    description: "Import transactions",
+  },
+  {
+    id: "alerts",
+    label: "Fraud alerts",
+    icon: "⌁",
+    description: "Review flagged activity",
+  },
+  {
+    id: "paths",
+    label: "Path analysis",
+    icon: "⌘",
+    description: "Explore account paths",
+  },
 ];
 
 function Brand({ compact = false }) {
@@ -72,7 +92,11 @@ function NavItems({ tab, setTab, mobile = false }) {
   return (
     <nav
       aria-label="Main navigation"
-      className={mobile ? "flex gap-2 overflow-x-auto px-4 pb-3" : "space-y-2"}
+      className={
+        mobile
+          ? "flex gap-2 overflow-x-auto px-4 pb-3"
+          : "space-y-2"
+      }
     >
       {TABS.map((item) => {
         const active = tab === item.id;
@@ -203,7 +227,9 @@ export default function App() {
               role: "analyst",
             });
 
-            if (active) setRole("analyst");
+            if (active) {
+              setRole("analyst");
+            }
           }
         } catch (error) {
           if (active) {
@@ -250,8 +276,6 @@ export default function App() {
 
         setBatches(loadedBatches);
 
-        // Keep the selected batch if it still exists.
-        // Otherwise, select the latest available batch.
         setSelectedBatchId((currentId) => {
           if (
             currentId &&
@@ -278,11 +302,10 @@ export default function App() {
     };
   }, [user?.uid]);
 
-  // Subscribe only to alerts belonging to the selected dataset.
+  // Subscribe to alerts belonging to the selected dataset.
   useEffect(() => {
     let active = true;
 
-    // Clear old dataset alerts immediately when selection changes.
     setAlerts([]);
 
     if (!user?.uid || !selectedBatchId) {
@@ -339,7 +362,7 @@ export default function App() {
     setTab("paths");
   };
 
-  // Delete a batch and its related alerts.
+  // Delete a batch, its related alerts, and its temporary FastAPI dataset.
   const handleDeleteBatch = async (batch) => {
     if (!batch?.id || !user?.uid) return;
 
@@ -353,6 +376,30 @@ export default function App() {
     setDataError("");
 
     try {
+      // Delete the temporary dataset from FastAPI first.
+      // HTTP 404 means it has already expired or been deleted.
+      if (API_URL && batch.datasetId) {
+        const apiBase = API_URL.replace(/\/+$/, "");
+
+        const response = await fetch(
+          `${apiBase}/datasets/${encodeURIComponent(batch.datasetId)}`,
+          { method: "DELETE" }
+        );
+
+        const responseBody = await response.json().catch(() => null);
+        const detail = responseBody?.detail;
+        const detailMessage =
+          typeof detail === "string" ? detail : detail?.message;
+
+        if (!response.ok && response.status !== 404) {
+          throw new Error(
+            detailMessage ||
+              `FastAPI dataset deletion failed (HTTP ${response.status}).`
+          );
+        }
+      }
+
+      // Find alerts belonging to this batch.
       const relatedAlertsQuery = query(
         collection(db, "alerts"),
         where("uploadedByUid", "==", user.uid),
@@ -370,7 +417,7 @@ export default function App() {
         );
       }
 
-      // Delete the batch document.
+      // Delete the Firestore batch document.
       await deleteDoc(doc(db, "batches", batch.id));
 
       if (selectedBatchId === batch.id) {
@@ -379,6 +426,7 @@ export default function App() {
           .sort((a, b) => {
             const aTime = a.createdAt?.toMillis?.() || 0;
             const bTime = b.createdAt?.toMillis?.() || 0;
+
             return bTime - aTime;
           });
 
@@ -388,7 +436,17 @@ export default function App() {
       if (uploadResult?.batchId === batch.id) {
         setUploadResult(null);
       }
+
+      console.log(
+        "[FinGuard AI] Batch and related data deleted:",
+        batch.id
+      );
     } catch (error) {
+      console.error(
+        "[FinGuard AI] Batch deletion failed:",
+        error
+      );
+
       setDataError(
         error?.message || "Unable to delete this upload."
       );
@@ -451,8 +509,8 @@ export default function App() {
 
             <p className="mt-2 text-xs leading-5 text-[#a9bbce]">
               {apiEnabled
-                ? "API configured. Requests may fall back to demo scoring."
-                : "Demo scoring mode. Configure your API to enable model requests."}
+                ? "API configured. Model availability is checked before scoring."
+                : "Configure your FastAPI URL to enable model-based scoring."}
             </p>
 
             <div className="mt-3 flex items-center gap-2">
@@ -532,6 +590,7 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Sign out button */}
               <button
                 type="button"
                 className={`${btnGhost} !rounded-xl !border-[#26394d] !bg-[#0d1b2a] !px-3 !py-2 !text-[#cbd5e1] hover:!bg-[#172b40] hover:!text-white`}
